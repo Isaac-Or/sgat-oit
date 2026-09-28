@@ -1,0 +1,3 @@
+Coloca aqui el script SQL de la base de datos (por ejemplo: schema.sql)
+con el cambio en mantenimientos:  tecnico_responsable_id BIGINT,   (sin NOT NULL)
+Docker lo ejecuta automaticamente la primera vez que se crea el contenedor de PostgreSQL.
