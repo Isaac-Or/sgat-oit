@@ -18,6 +18,7 @@ import pe.gob.cultura.sgat.config.UsuarioAutenticado;
 import pe.gob.cultura.sgat.dto.ActivoRequest;
 import pe.gob.cultura.sgat.dto.ActivoResponse;
 import pe.gob.cultura.sgat.service.ActivoService;
+import pe.gob.cultura.sgat.dto.HistorialResponse;
 
 @RestController
 @RequestMapping("/api/activos")
@@ -49,5 +50,10 @@ public class ActivoController {
     public ActivoResponse actualizar(@PathVariable Long id, @Valid @RequestBody ActivoRequest request,
                                      @AuthenticationPrincipal UsuarioAutenticado usuario) {
         return activoService.actualizar(id, request, usuario.id());
+    }
+    
+    @GetMapping("/{id}/historial")
+    public List<HistorialResponse> historial(@PathVariable Long id) {
+        return activoService.historial(id);
     }
 }

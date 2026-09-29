@@ -25,7 +25,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (header != null && header.startsWith("Bearer ")) {
@@ -40,6 +40,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 SecurityContextHolder.getContext().setAuthentication(
                         new UsernamePasswordAuthenticationToken(principal, null, autoridades));
             } catch (JwtException | IllegalArgumentException | NullPointerException ex) {
+                System.out.println("ERROR VALIDANDO TOKEN: " + ex.getMessage());
                 SecurityContextHolder.clearContext();
             }
         }

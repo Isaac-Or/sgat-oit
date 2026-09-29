@@ -42,7 +42,7 @@ public class SolicitudService {
         this.usuarioRepository = usuarioRepository;
     }
 
-    /** Registra la solicitud en estado PENDIENTE (HU-05). */
+    // Registra la solicitud en estado PENDIENTE (HU-05). 
     @Transactional
     public SolicitudResponse crear(SolicitudRequest request, Long usuarioId) {
         Solicitud solicitud = new Solicitud();
@@ -81,14 +81,14 @@ public class SolicitudService {
         return aRespuesta(solicitudRepository.saveAndFlush(solicitud));
     }
 
-    /** Solicitudes del colaborador autenticado (HU-07). */
+    // Solicitudes del colaborador autenticado (HU-07). 
     @Transactional(readOnly = true)
     public List<SolicitudResponse> misSolicitudes(Long usuarioId) {
         return solicitudRepository.findByUsuarioSolicitanteIdOrderByFechaSolicitudDesc(usuarioId)
                 .stream().map(this::aRespuesta).toList();
     }
 
-    /** Bandeja del administrador, con filtro opcional por estado. */
+    // Bandeja del administrador, con filtro opcional por estado.
     @Transactional(readOnly = true)
     public List<SolicitudResponse> listar(String estado) {
         List<Solicitud> solicitudes = (estado == null || estado.isBlank())
@@ -97,7 +97,7 @@ public class SolicitudService {
         return solicitudes.stream().map(this::aRespuesta).toList();
     }
 
-    /** Aprueba (eligiendo el activo físico de cada detalle) o rechaza una solicitud (HU-06). */
+    // Aprueba (eligiendo el activo físico de cada detalle) o rechaza una solicitud (HU-06).
     @Transactional
     public SolicitudResponse atender(Long id, AtencionRequest request, Long administradorId) {
         Solicitud solicitud = solicitudRepository.findById(id)

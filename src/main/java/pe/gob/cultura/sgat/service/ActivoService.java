@@ -12,8 +12,11 @@ import pe.gob.cultura.sgat.model.entity.Activo;
 import pe.gob.cultura.sgat.model.entity.TipoActivo;
 import pe.gob.cultura.sgat.model.entity.Ubicacion;
 import pe.gob.cultura.sgat.repository.ActivoRepository;
+import pe.gob.cultura.sgat.repository.HistorialEstadoActivoRepository;
 import pe.gob.cultura.sgat.repository.TipoActivoRepository;
 import pe.gob.cultura.sgat.repository.UbicacionRepository;
+import pe.gob.cultura.sgat.dto.HistorialResponse;
+import pe.gob.cultura.sgat.repository.HistorialEstadoActivoRepository;
 
 @Service
 public class ActivoService {
@@ -21,17 +24,18 @@ public class ActivoService {
     private static final Set<String> ESTADOS = Set.of("DISPONIBLE", "ASIGNADO", "EN_MANTENIMIENTO", "DE_BAJA");
     private static final Set<String> CONDICIONES = Set.of("BUENO", "REGULAR", "MALO");
 
-    private final ActivoRepository activoRepository;
+       private final ActivoRepository activoRepository;
     private final TipoActivoRepository tipoActivoRepository;
     private final UbicacionRepository ubicacionRepository;
+    private final HistorialEstadoActivoRepository historialRepository;
 
     public ActivoService(ActivoRepository activoRepository, TipoActivoRepository tipoActivoRepository,
-                         UbicacionRepository ubicacionRepository) {
+                         UbicacionRepository ubicacionRepository, HistorialEstadoActivoRepository historialRepository) {
         this.activoRepository = activoRepository;
         this.tipoActivoRepository = tipoActivoRepository;
         this.ubicacionRepository = ubicacionRepository;
+        this.historialRepository = historialRepository;
     }
-
     @Transactional(readOnly = true)
     public List<ActivoResponse> listar(String estado) {
         List<Activo> activos = (estado == null || estado.isBlank())
@@ -83,6 +87,21 @@ public class ActivoService {
         // Requerido por el trigger de historial cuando cambia el estado
         activo.setModificadoPor(usuarioId);
         return aRespuesta(activoRepository.saveAndFlush(activo));
+    }
+        @Transactional(readOnly = true)
+    public List<HistorialResponse> historial(Long activoId) {
+        if (!activoRepository.existsById(activoId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Activo no encontrado");
+        }
+        return historialRepository.findByActivoIdOrderByFechaCambioDesc(activoId).stream()
+                .map(h -> new HistorialResponse(
+                        h.getId(),
+                        h.getEstadoAnterior(),
+                        h.getEstadoNuevo(),
+                        h.getFechaCambio(),
+                        h.getMotivo(),
+                        h.getCambiadoPor().getNombres() + " " + h.getCambiadoPor().getApellidos()))
+                .toList();
     }
 
     private void aplicarDatos(Activo activo, ActivoRequest request) {
