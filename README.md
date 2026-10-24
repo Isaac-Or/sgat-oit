@@ -1,4 +1,4 @@
-# SGAT-OIT | Sistema de Gestión de Activos Tecnológicos.
+# SGAT-OIT | Sistema de Gestión de Activos Tecnológicos
 
 Plataforma web desarrollada para la Oficina de Infraestructura Tecnológica (OIT) del Ministerio de Cultura, orientada al control de inventario, solicitudes, préstamos, mantenimientos y trazabilidad de activos.
 
