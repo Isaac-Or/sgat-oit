@@ -12,14 +12,17 @@ import pe.gob.cultura.sgat.repository.RolRepository;
 import pe.gob.cultura.sgat.repository.UsuarioRepository;
 
 /**
- * El script SQL crea al administrador deshabilitado. Si se define la variable
- * BOOTSTRAP_ADMIN_PASSWORD, esta clase le asigna esa contrasena (cifrada con BCrypt)
- * y lo habilita. Opcionalmente crea usuarios de prueba.
+ * El script SQL crea al administrador deshabilitado con un hash marcador. Si se
+ * define la variable BOOTSTRAP_ADMIN_PASSWORD, esta clase activa esa cuenta inicial
+ * una sola vez. No reactiva una cuenta deshabilitada posteriormente. Opcionalmente
+ * crea usuarios de prueba.
  */
 @Component
 public class AdminBootstrap implements CommandLineRunner {
 
     private static final String CORREO_ADMIN = "admin@cultura.gob.pe";
+    private static final String HASH_INICIAL_ADMIN =
+            "$2y$12$rbui/6O8hWLUGDYHhkeBT.zPPQB0eGIzY8m59zvIfq8VUR8J0ydAq";
 
     private final UsuarioRepository usuarioRepository;
     private final RolRepository rolRepository;
@@ -45,7 +48,12 @@ public class AdminBootstrap implements CommandLineRunner {
             return;
         }
         usuarioRepository.findByCorreoInstitucional(CORREO_ADMIN).ifPresent(admin -> {
-            if (!admin.isHabilitado()) {
+            boolean esCuentaInicial = !admin.isHabilitado()
+                    && admin.isActivoLogico()
+                    && HASH_INICIAL_ADMIN.equals(admin.getPasswordHash())
+                    && admin.getRoles().stream().anyMatch(rol ->
+                            rol.isActivoLogico() && "ROLE_ADMIN".equals(rol.getCodigo()));
+            if (esCuentaInicial) {
                 admin.setPasswordHash(passwordEncoder.encode(adminPassword));
                 admin.setHabilitado(true);
                 usuarioRepository.save(admin);

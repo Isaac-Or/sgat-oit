@@ -39,7 +39,14 @@ public class AuthService {
             throw credencialesInvalidas();
         }
 
-        List<String> roles = usuario.getRoles().stream().map(Rol::getCodigo).sorted().toList();
+        List<String> roles = usuario.getRoles().stream()
+                .filter(Rol::isActivoLogico)
+                .map(Rol::getCodigo)
+                .sorted()
+                .toList();
+        if (roles.isEmpty()) {
+            throw credencialesInvalidas();
+        }
         String token = jwtService.generar(usuario.getId(), usuario.getCorreoInstitucional(), roles);
         return new LoginResponse(token, "Bearer", usuario.getCorreoInstitucional(), roles);
     }
