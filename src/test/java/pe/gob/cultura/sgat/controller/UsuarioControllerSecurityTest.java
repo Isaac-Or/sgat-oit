@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -32,6 +33,8 @@ import pe.gob.cultura.sgat.config.JwtAuthFilter;
 import pe.gob.cultura.sgat.config.JwtService;
 import pe.gob.cultura.sgat.config.SecurityConfig;
 import pe.gob.cultura.sgat.dto.CrearUsuarioRequest;
+import pe.gob.cultura.sgat.dto.CambiarHabilitacionRequest;
+import pe.gob.cultura.sgat.dto.EditarUsuarioRequest;
 import pe.gob.cultura.sgat.dto.PaginaResponse;
 import pe.gob.cultura.sgat.dto.UsuarioResponse;
 import pe.gob.cultura.sgat.model.entity.Permiso;
@@ -302,6 +305,113 @@ class UsuarioControllerSecurityTest {
                 .andExpect(jsonPath("$.mensaje").value("Usuario no encontrado"))
                 .andExpect(jsonPath("$.password").doesNotExist())
                 .andExpect(jsonPath("$.passwordHash").doesNotExist())
+                .andExpect(jsonPath("$.exception").doesNotExist());
+    }
+
+    @Test
+    void editaUsuarioComoAdministradorSinExponerDatosSensibles() throws Exception {
+        autenticarComo(usuarioVigente(1L, "admin@cultura.gob.pe", rol("ROLE_ADMIN", true)));
+        when(usuarioService.actualizar(eq(10L), any(EditarUsuarioRequest.class), eq(1L)))
+                .thenReturn(new UsuarioResponse(
+                        10L, "Ana", "Pérez", "ana@cultura.gob.pe", true,
+                        Set.of("ROLE_TECNICO")));
+        String request = """
+                {
+                  "nombres": "Ana",
+                  "apellidos": "Pérez",
+                  "correoInstitucional": "ana@cultura.gob.pe",
+                  "roles": ["ROLE_TECNICO"]
+                }
+                """;
+
+        mockMvc.perform(put("/api/usuarios/10")
+                        .header("Authorization", "Bearer token-vigente")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(10))
+                .andExpect(jsonPath("$.roles[0]").value("ROLE_TECNICO"))
+                .andExpect(jsonPath("$.password").doesNotExist())
+                .andExpect(jsonPath("$.passwordHash").doesNotExist());
+    }
+
+    @Test
+    void rechazaEdicionSinToken() throws Exception {
+        mockMvc.perform(put("/api/usuarios/10")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+
+        verify(usuarioService, never()).actualizar(anyLong(), any(), anyLong());
+    }
+
+    @Test
+    void rechazaEdicionSinPrivilegiosAdministrativos() throws Exception {
+        autenticarComo(usuarioVigente(2L, "usuario@cultura.gob.pe", rol("ROLE_TECNICO", true)));
+
+        mockMvc.perform(put("/api/usuarios/10")
+                        .header("Authorization", "Bearer token-vigente")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+
+        verify(usuarioService, never()).actualizar(anyLong(), any(), anyLong());
+    }
+
+    @Test
+    void rechazaCamposInvalidosAlEditar() throws Exception {
+        autenticarComo(usuarioVigente(1L, "admin@cultura.gob.pe", rol("ROLE_ADMIN", true)));
+        String request = """
+                {
+                  "nombres": " ",
+                  "apellidos": "",
+                  "correoInstitucional": "correo-invalido",
+                  "roles": []
+                }
+                """;
+
+        mockMvc.perform(put("/api/usuarios/10")
+                        .header("Authorization", "Bearer token-vigente")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isBadRequest());
+
+        verify(usuarioService, never()).actualizar(anyLong(), any(), anyLong());
+    }
+
+    @Test
+    void deshabilitaUsuarioComoAdministrador() throws Exception {
+        autenticarComo(usuarioVigente(1L, "admin@cultura.gob.pe", rol("ROLE_ADMIN", true)));
+        when(usuarioService.cambiarHabilitacion(
+                eq(10L), any(CambiarHabilitacionRequest.class), eq(1L)))
+                .thenReturn(new UsuarioResponse(
+                        10L, "Ana", "Pérez", "ana@cultura.gob.pe", false,
+                        Set.of("ROLE_TECNICO")));
+
+        mockMvc.perform(put("/api/usuarios/10/habilitacion")
+                        .header("Authorization", "Bearer token-vigente")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"habilitado\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.habilitado").value(false))
+                .andExpect(jsonPath("$.passwordHash").doesNotExist());
+    }
+
+    @Test
+    void devuelveConflictAnteAutodeshabilitacion() throws Exception {
+        autenticarComo(usuarioVigente(1L, "admin@cultura.gob.pe", rol("ROLE_ADMIN", true)));
+        when(usuarioService.cambiarHabilitacion(
+                eq(1L), any(CambiarHabilitacionRequest.class), eq(1L)))
+                .thenThrow(new ResponseStatusException(
+                        HttpStatus.CONFLICT, "No puede deshabilitar su propia cuenta"));
+
+        mockMvc.perform(put("/api/usuarios/1/habilitacion")
+                        .header("Authorization", "Bearer token-vigente")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"habilitado\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.mensaje")
+                        .value("No puede deshabilitar su propia cuenta"))
                 .andExpect(jsonPath("$.exception").doesNotExist());
     }
 

@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -17,7 +18,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import pe.gob.cultura.sgat.dto.CambiarHabilitacionRequest;
 import pe.gob.cultura.sgat.dto.CrearUsuarioRequest;
+import pe.gob.cultura.sgat.dto.EditarUsuarioRequest;
 import pe.gob.cultura.sgat.dto.PaginaResponse;
 import pe.gob.cultura.sgat.dto.UsuarioResponse;
 import pe.gob.cultura.sgat.model.entity.Rol;
@@ -65,7 +68,7 @@ public class UsuarioService {
         }
 
         String correo = request.correoInstitucional()
-                .trim().toLowerCase(java.util.Locale.ROOT);
+                .trim().toLowerCase(Locale.ROOT);
 
         if (usuarioRepository.findByCorreoInstitucional(correo).isPresent()) {
             throw new ResponseStatusException(
@@ -135,12 +138,124 @@ public class UsuarioService {
         return aRespuesta(usuario);
     }
 
+    @Transactional
+    public UsuarioResponse actualizar(
+            Long id, EditarUsuarioRequest request, Long administradorId) {
+        bloquearAdministracionUsuarios();
+        validarAdministrador(administradorId);
+        Usuario usuario = usuarioRepository.findActivoByIdForUpdate(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+
+        String correo = request.correoInstitucional().trim().toLowerCase(Locale.ROOT);
+        usuarioRepository.findByCorreoInstitucional(correo)
+                .filter(existente -> !existente.getId().equals(id))
+                .ifPresent(existente -> {
+                    throw new ResponseStatusException(
+                            HttpStatus.CONFLICT, "El correo ya está registrado");
+                });
+
+        Set<Rol> roles = resolverRoles(request.roles());
+        if (esAdministradorActivo(usuario)
+                && roles.stream().noneMatch(this::esRolAdministradorVigente)) {
+            asegurarQueNoSeaElUltimoAdministrador();
+        }
+
+        usuario.setNombres(request.nombres().trim());
+        usuario.setApellidos(request.apellidos().trim());
+        usuario.setCorreoInstitucional(correo);
+        usuario.setRoles(roles);
+        usuario.setModificadoPor(administradorId);
+        return aRespuesta(usuarioRepository.saveAndFlush(usuario));
+    }
+
+    @Transactional
+    public UsuarioResponse cambiarHabilitacion(
+            Long id, CambiarHabilitacionRequest request, Long administradorId) {
+        if (request.habilitado() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Debe indicar el estado de habilitación");
+        }
+
+        bloquearAdministracionUsuarios();
+        validarAdministrador(administradorId);
+        Usuario usuario = usuarioRepository.findActivoByIdForUpdate(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        boolean habilitar = request.habilitado();
+
+        if (usuario.isHabilitado() == habilitar) {
+            return aRespuesta(usuario);
+        }
+        if (!habilitar && id.equals(administradorId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "No puede deshabilitar su propia cuenta");
+        }
+        if (!habilitar && esAdministradorActivo(usuario)) {
+            asegurarQueNoSeaElUltimoAdministrador();
+        }
+
+        usuario.setHabilitado(habilitar);
+        usuario.setModificadoPor(administradorId);
+        return aRespuesta(usuarioRepository.saveAndFlush(usuario));
+    }
+
     private String cifrarPassword(String password) {
         if (password.getBytes(StandardCharsets.UTF_8).length > 72) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "La contraseña excede el máximo permitido");
         }
         return passwordEncoder.encode(password);
+    }
+
+    private Set<Rol> resolverRoles(Set<String> codigosRoles) {
+        validarCodigosRoles(codigosRoles);
+        Set<Rol> roles = new HashSet<>();
+        for (String codigo : codigosRoles) {
+            Rol rol = rolRepository.findByCodigo(codigo)
+                    .filter(Rol::isActivoLogico)
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.BAD_REQUEST, "Rol no válido"));
+            roles.add(rol);
+        }
+        return roles;
+    }
+
+    private void validarCodigosRoles(Set<String> codigosRoles) {
+        if (codigosRoles == null || codigosRoles.isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Debe indicar al menos un rol");
+        }
+        for (String codigo : codigosRoles) {
+            if (codigo == null || !ROLES_VALIDOS.contains(codigo)) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "Rol no permitido");
+            }
+        }
+    }
+
+    private void bloquearAdministracionUsuarios() {
+        rolRepository.findByCodigoForUpdate("ROLE_ADMIN")
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT, "Configuración de roles no disponible"));
+    }
+
+    private void asegurarQueNoSeaElUltimoAdministrador() {
+        if (usuarioRepository.countAdministradoresActivos() <= 1) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "La operación dejaría al sistema sin administradores activos");
+        }
+    }
+
+    private boolean esAdministradorActivo(Usuario usuario) {
+        return usuario.isHabilitado()
+                && usuario.isActivoLogico()
+                && usuario.getRoles().stream().anyMatch(this::esRolAdministradorVigente);
+    }
+
+    private boolean esRolAdministradorVigente(Rol rol) {
+        return rol.isActivoLogico() && "ROLE_ADMIN".equals(rol.getCodigo());
     }
 
     private void validarAdministrador(Long administradorId) {

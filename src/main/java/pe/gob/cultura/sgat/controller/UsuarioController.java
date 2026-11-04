@@ -11,8 +11,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PutMapping;
 import pe.gob.cultura.sgat.config.UsuarioAutenticado;
+import pe.gob.cultura.sgat.dto.CambiarHabilitacionRequest;
 import pe.gob.cultura.sgat.dto.CrearUsuarioRequest;
+import pe.gob.cultura.sgat.dto.EditarUsuarioRequest;
 import pe.gob.cultura.sgat.dto.PaginaResponse;
 import pe.gob.cultura.sgat.dto.UsuarioResponse;
 import pe.gob.cultura.sgat.service.UsuarioService;
@@ -46,5 +49,20 @@ public class UsuarioController {
     public UsuarioResponse obtener(@PathVariable Long id,
                                    @AuthenticationPrincipal UsuarioAutenticado administrador) {
         return usuarioService.obtener(id, administrador.id());
+    }
+
+    @PutMapping("/{id}")
+    public UsuarioResponse actualizar(@PathVariable Long id,
+                                      @Valid @RequestBody EditarUsuarioRequest request,
+                                      @AuthenticationPrincipal UsuarioAutenticado administrador) {
+        return usuarioService.actualizar(id, request, administrador.id());
+    }
+
+    @PutMapping("/{id}/habilitacion")
+    public UsuarioResponse cambiarHabilitacion(
+            @PathVariable Long id,
+            @Valid @RequestBody CambiarHabilitacionRequest request,
+            @AuthenticationPrincipal UsuarioAutenticado administrador) {
+        return usuarioService.cambiarHabilitacion(id, request, administrador.id());
     }
 }
