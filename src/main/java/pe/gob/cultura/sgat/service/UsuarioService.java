@@ -2,6 +2,7 @@
 package pe.gob.cultura.sgat.service;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.List;
@@ -12,6 +13,7 @@ import java.util.stream.Collectors;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -96,7 +98,7 @@ public class UsuarioService {
         usuario.setCreadoPor(administradorId);
         usuario.setRoles(roles);
 
-        Usuario guardado = usuarioRepository.saveAndFlush(usuario);
+        Usuario guardado = guardarConCorreoUnico(usuario);
 
         return aRespuesta(guardado);
     }
@@ -166,7 +168,7 @@ public class UsuarioService {
         usuario.setCorreoInstitucional(correo);
         usuario.setRoles(roles);
         usuario.setModificadoPor(administradorId);
-        return aRespuesta(usuarioRepository.saveAndFlush(usuario));
+        return aRespuesta(guardarConCorreoUnico(usuario));
     }
 
     @Transactional
@@ -206,6 +208,30 @@ public class UsuarioService {
                     HttpStatus.BAD_REQUEST, "La contraseña excede el máximo permitido");
         }
         return passwordEncoder.encode(password);
+    }
+
+    private Usuario guardarConCorreoUnico(Usuario usuario) {
+        try {
+            return usuarioRepository.saveAndFlush(usuario);
+        } catch (DataIntegrityViolationException ex) {
+            if (esViolacionUnicidad(ex)) {
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT, "El correo ya está registrado", ex);
+            }
+            throw ex;
+        }
+    }
+
+    private boolean esViolacionUnicidad(Throwable error) {
+        Throwable causa = error;
+        while (causa != null) {
+            if (causa instanceof SQLException sqlException
+                    && "23505".equals(sqlException.getSQLState())) {
+                return true;
+            }
+            causa = causa.getCause();
+        }
+        return false;
     }
 
     private Set<Rol> resolverRoles(Set<String> codigosRoles) {
