@@ -9,12 +9,15 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.sql.DataSource;
 
 final class EmbeddedPostgresTestDatabase implements AutoCloseable {
 
-    private static final Path BASELINE = Path.of("db", "001_schema_baseline.sql");
+    private static final List<Path> MIGRATIONS = List.of(
+            Path.of("db", "001_schema_baseline.sql"),
+            Path.of("db", "002_reservas_activos.sql"));
 
     private final EmbeddedPostgres postgres;
     private final DataSource dataSource;
@@ -41,10 +44,11 @@ final class EmbeddedPostgresTestDatabase implements AutoCloseable {
             }
 
             DataSource dataSource = postgres.getDatabase("postgres", "sgat_oit");
-            String baseline = Files.readString(BASELINE, StandardCharsets.UTF_8);
             try (Connection connection = dataSource.getConnection();
                  Statement statement = connection.createStatement()) {
-                statement.execute(baseline);
+                for (Path migration : MIGRATIONS) {
+                    statement.execute(Files.readString(migration, StandardCharsets.UTF_8));
+                }
             }
             return new EmbeddedPostgresTestDatabase(postgres, dataSource);
         } catch (Exception ex) {

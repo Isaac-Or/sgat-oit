@@ -3,15 +3,15 @@ import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from '../components/Icon'
 import { etiquetaRol } from '../utils/roles'
 
-const modules: Array<{ title: string; description: string; to: string; icon: IconName; admin?: boolean }> = [
+const modules: Array<{ title: string; description: string; to: string; icon: IconName; roles?: string[] }> = [
   { title: 'Inventario', description: 'Consulta y gestión de activos tecnológicos.', to: '/inventario', icon: 'inventory' },
-  { title: 'Solicitudes', description: 'Seguimiento de requerimientos institucionales.', to: '/solicitudes', icon: 'requests' },
-  { title: 'Usuarios', description: 'Cuentas, roles y estados de acceso.', to: '/usuarios', icon: 'users', admin: true },
+  { title: 'Solicitudes', description: 'Seguimiento de requerimientos institucionales.', to: '/solicitudes', icon: 'requests', roles: ['ROLE_ADMIN', 'ROLE_SOLICITANTE'] },
+  { title: 'Usuarios', description: 'Cuentas, roles y estados de acceso.', to: '/usuarios', icon: 'users', roles: ['ROLE_ADMIN'] },
 ]
 
 export function DashboardPage() {
   const { session, hasRole } = useAuth()
-  const visibleModules = modules.filter((module) => !module.admin || hasRole('ROLE_ADMIN'))
+  const visibleModules = modules.filter((module) => !module.roles || module.roles.some(hasRole))
 
   return (
     <div className="page-stack">
@@ -52,8 +52,8 @@ export function DashboardPage() {
 
       <section className="phase-note">
         <div className="phase-line" />
-        <div><span>Fase inicial</span><strong>Base operativa preparada</strong></div>
-        <p>Los módulos de inventario y solicitudes se completarán en las siguientes fases.</p>
+        <div><span>Operación integrada</span><strong>Módulos conectados al backend</strong></div>
+        <p>Las acciones visibles dependen de los roles vigentes y siempre son verificadas por el servidor.</p>
       </section>
     </div>
   )

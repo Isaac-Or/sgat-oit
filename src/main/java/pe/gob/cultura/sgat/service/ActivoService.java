@@ -1,6 +1,7 @@
 package pe.gob.cultura.sgat.service;
 
 import java.util.List;
+import java.util.HashSet;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -13,10 +14,10 @@ import pe.gob.cultura.sgat.model.entity.TipoActivo;
 import pe.gob.cultura.sgat.model.entity.Ubicacion;
 import pe.gob.cultura.sgat.repository.ActivoRepository;
 import pe.gob.cultura.sgat.repository.HistorialEstadoActivoRepository;
+import pe.gob.cultura.sgat.repository.ReservaActivoRepository;
 import pe.gob.cultura.sgat.repository.TipoActivoRepository;
 import pe.gob.cultura.sgat.repository.UbicacionRepository;
 import pe.gob.cultura.sgat.dto.HistorialResponse;
-import pe.gob.cultura.sgat.repository.HistorialEstadoActivoRepository;
 
 @Service
 public class ActivoService {
@@ -24,24 +25,29 @@ public class ActivoService {
     private static final Set<String> ESTADOS = Set.of("DISPONIBLE", "ASIGNADO", "EN_MANTENIMIENTO", "DE_BAJA");
     private static final Set<String> CONDICIONES = Set.of("BUENO", "REGULAR", "MALO");
 
-       private final ActivoRepository activoRepository;
+    private final ActivoRepository activoRepository;
     private final TipoActivoRepository tipoActivoRepository;
     private final UbicacionRepository ubicacionRepository;
     private final HistorialEstadoActivoRepository historialRepository;
+    private final ReservaActivoRepository reservaActivoRepository;
 
     public ActivoService(ActivoRepository activoRepository, TipoActivoRepository tipoActivoRepository,
-                         UbicacionRepository ubicacionRepository, HistorialEstadoActivoRepository historialRepository) {
+                         UbicacionRepository ubicacionRepository, HistorialEstadoActivoRepository historialRepository,
+                         ReservaActivoRepository reservaActivoRepository) {
         this.activoRepository = activoRepository;
         this.tipoActivoRepository = tipoActivoRepository;
         this.ubicacionRepository = ubicacionRepository;
         this.historialRepository = historialRepository;
+        this.reservaActivoRepository = reservaActivoRepository;
     }
+
     @Transactional(readOnly = true)
     public List<ActivoResponse> listar(String estado) {
         List<Activo> activos = (estado == null || estado.isBlank())
                 ? activoRepository.findByActivoLogicoTrueOrderByCodigoPatrimonialAsc()
                 : activoRepository.findByEstadoAndActivoLogicoTrueOrderByCodigoPatrimonialAsc(estado.trim().toUpperCase());
-        return activos.stream().map(this::aRespuesta).toList();
+        Set<Long> reservados = new HashSet<>(reservaActivoRepository.findIdsActivosConReservaActiva());
+        return activos.stream().map(a -> aRespuesta(a, reservados.contains(a.getId()))).toList();
     }
 
     @Transactional
@@ -62,7 +68,7 @@ public class ActivoService {
         activo.setEstado(estadoValido(request.estado(), "DISPONIBLE"));
         activo.setCreadoPor(usuarioId);
         // El trigger de la BD registra automáticamente el estado inicial en el historial
-        return aRespuesta(activoRepository.saveAndFlush(activo));
+        return aRespuesta(activoRepository.saveAndFlush(activo), false);
     }
 
     @Transactional
@@ -86,7 +92,10 @@ public class ActivoService {
         activo.setEstado(estadoValido(request.estado(), activo.getEstado()));
         // Requerido por el trigger de historial cuando cambia el estado
         activo.setModificadoPor(usuarioId);
-        return aRespuesta(activoRepository.saveAndFlush(activo));
+        Activo actualizado = activoRepository.saveAndFlush(activo);
+        boolean reservado = reservaActivoRepository.existsByActivoIdAndEstado(
+                actualizado.getId(), pe.gob.cultura.sgat.model.entity.ReservaActivo.ACTIVA);
+        return aRespuesta(actualizado, reservado);
     }
         @Transactional(readOnly = true)
     public List<HistorialResponse> historial(Long activoId) {
@@ -116,7 +125,9 @@ public class ActivoService {
         activo.setUbicacion(ubicacion);
         activo.setMarca(request.marca().trim());
         activo.setModelo(request.modelo().trim());
-        activo.setDescripcion(request.descripcion());
+        if (request.descripcion() != null || activo.getId() == null) {
+            activo.setDescripcion(request.descripcion());
+        }
         activo.setCondicionFisica(condicionValida(request.condicionFisica(), activo.getCondicionFisica()));
     }
 
@@ -150,17 +161,21 @@ public class ActivoService {
         return new ResponseStatusException(HttpStatus.CONFLICT, mensaje);
     }
 
-    private ActivoResponse aRespuesta(Activo a) {
+    private ActivoResponse aRespuesta(Activo a, boolean reservado) {
         return new ActivoResponse(
                 a.getId(),
+                a.getTipoActivo().getId(),
+                a.getUbicacion().getId(),
                 a.getCodigoPatrimonial(),
                 a.getNumeroSerie(),
                 a.getMarca(),
                 a.getModelo(),
+                a.getDescripcion(),
                 a.getTipoActivo().getCategoria().getNombre(),
                 a.getTipoActivo().getNombre(),
                 a.getUbicacion().getNombre(),
                 a.getEstado(),
-                a.getCondicionFisica());
+                a.getCondicionFisica(),
+                reservado);
     }
 }

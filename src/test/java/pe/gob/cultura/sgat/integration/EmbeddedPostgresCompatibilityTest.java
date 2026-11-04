@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import org.junit.jupiter.api.Test;
 
 class EmbeddedPostgresCompatibilityTest {
@@ -23,6 +26,18 @@ class EmbeddedPostgresCompatibilityTest {
             assertEquals("127.0.0.1", info.listenAddresses());
             assertEquals(database.port(), info.port());
             assertTrue(info.port() > 0);
+            try (Connection connection = database.dataSource().getConnection();
+                 Statement statement = connection.createStatement();
+                 ResultSet result = statement.executeQuery("""
+                         select count(*)
+                         from pg_catalog.pg_indexes
+                         where schemaname = 'public'
+                           and tablename = 'reservas_activos'
+                           and indexname = 'ux_reserva_activo_activa'
+                         """)) {
+                result.next();
+                assertEquals(1, result.getInt(1));
+            }
         }
 
         assertThrows(SQLException.class,

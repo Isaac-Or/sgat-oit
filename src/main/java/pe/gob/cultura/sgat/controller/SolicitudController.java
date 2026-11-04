@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import pe.gob.cultura.sgat.config.UsuarioAutenticado;
 import pe.gob.cultura.sgat.dto.AtencionRequest;
+import pe.gob.cultura.sgat.dto.CancelarSolicitudRequest;
 import pe.gob.cultura.sgat.dto.SolicitudRequest;
 import pe.gob.cultura.sgat.dto.SolicitudResponse;
 import pe.gob.cultura.sgat.service.SolicitudService;
@@ -50,5 +51,12 @@ public class SolicitudController {
     public SolicitudResponse atender(@PathVariable Long id, @Valid @RequestBody AtencionRequest request,
                                      @AuthenticationPrincipal UsuarioAutenticado usuario) {
         return solicitudService.atender(id, request, usuario.id());
+    }
+
+    @PutMapping("/{id}/cancelacion")
+    public SolicitudResponse cancelar(@PathVariable Long id,
+                                      @Valid @RequestBody CancelarSolicitudRequest request,
+                                      @AuthenticationPrincipal UsuarioAutenticado usuario) {
+        return solicitudService.cancelar(id, request, usuario.id());
     }
 }

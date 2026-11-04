@@ -9,12 +9,13 @@ interface NavItem {
   to: string
   icon: IconName
   adminOnly?: boolean
+  roles?: string[]
 }
 
 const navItems: NavItem[] = [
   { label: 'Inicio', to: '/', icon: 'dashboard' },
   { label: 'Inventario', to: '/inventario', icon: 'inventory' },
-  { label: 'Solicitudes', to: '/solicitudes', icon: 'requests' },
+  { label: 'Solicitudes', to: '/solicitudes', icon: 'requests', roles: ['ROLE_ADMIN', 'ROLE_SOLICITANTE'] },
   { label: 'Usuarios', to: '/usuarios', icon: 'users', adminOnly: true },
 ]
 
@@ -30,7 +31,10 @@ export function AppShell() {
   const { session, logout, hasRole } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
-  const visibleItems = navItems.filter((item) => !item.adminOnly || hasRole('ROLE_ADMIN'))
+  const visibleItems = navItems.filter((item) => {
+    if (item.adminOnly && !hasRole('ROLE_ADMIN')) return false
+    return !item.roles || item.roles.some(hasRole)
+  })
 
   return (
     <div className="app-layout">

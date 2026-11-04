@@ -6,4 +6,5 @@ import pe.gob.cultura.sgat.model.entity.Asignacion;
 
 public interface AsignacionRepository extends JpaRepository<Asignacion, Long> {
 
+    boolean existsByActivoIdAndFechaDevolucionRealIsNull(Long activoId);
 }

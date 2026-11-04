@@ -36,7 +36,8 @@ public class ActivoController {
                                        Authentication authentication) {
         boolean veTodo = authentication.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN") || a.getAuthority().equals("ROLE_TECNICO"));
-        return activoService.listar(veTodo ? estado : "DISPONIBLE");
+        List<ActivoResponse> activos = activoService.listar(veTodo ? estado : "DISPONIBLE");
+        return veTodo ? activos : activos.stream().filter(a -> !a.reservado()).toList();
     }
 
     @PostMapping

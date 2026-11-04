@@ -46,16 +46,23 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 import pe.gob.cultura.sgat.dto.CambiarHabilitacionRequest;
+import pe.gob.cultura.sgat.dto.ActivoRequest;
+import pe.gob.cultura.sgat.dto.ActivoResponse;
 import pe.gob.cultura.sgat.dto.CrearUsuarioRequest;
+import pe.gob.cultura.sgat.dto.DetalleRequest;
 import pe.gob.cultura.sgat.dto.EditarUsuarioRequest;
 import pe.gob.cultura.sgat.dto.LoginRequest;
 import pe.gob.cultura.sgat.dto.LoginResponse;
 import pe.gob.cultura.sgat.dto.PaginaResponse;
+import pe.gob.cultura.sgat.dto.SolicitudRequest;
+import pe.gob.cultura.sgat.dto.SolicitudResponse;
 import pe.gob.cultura.sgat.dto.UsuarioResponse;
 import pe.gob.cultura.sgat.model.entity.Usuario;
 import pe.gob.cultura.sgat.repository.RolRepository;
 import pe.gob.cultura.sgat.repository.UsuarioRepository;
 import pe.gob.cultura.sgat.service.AuthService;
+import pe.gob.cultura.sgat.service.ActivoService;
+import pe.gob.cultura.sgat.service.SolicitudService;
 import pe.gob.cultura.sgat.service.UsuarioService;
 
 @SpringBootTest
@@ -85,6 +92,8 @@ class UsuarioPostgresIntegrationTest {
 
     @Autowired private UsuarioService usuarioService;
     @Autowired private AuthService authService;
+    @Autowired private ActivoService activoService;
+    @Autowired private SolicitudService solicitudService;
     @Autowired private UsuarioRepository usuarioRepository;
     @Autowired private RolRepository rolRepository;
     @Autowired private PasswordEncoder passwordEncoder;
@@ -97,6 +106,13 @@ class UsuarioPostgresIntegrationTest {
 
     @BeforeEach
     void restaurarDatos() {
+        jdbcTemplate.update("DELETE FROM asignaciones");
+        jdbcTemplate.update("DELETE FROM mantenimientos");
+        jdbcTemplate.update("DELETE FROM reservas_activos");
+        jdbcTemplate.update("DELETE FROM solicitud_detalles");
+        jdbcTemplate.update("DELETE FROM solicitudes");
+        jdbcTemplate.update("DELETE FROM historial_estados_activo");
+        jdbcTemplate.update("DELETE FROM activos");
         jdbcTemplate.update("UPDATE roles SET activo_logico = TRUE");
         jdbcTemplate.update("DELETE FROM usuario_rol WHERE usuario_id IN "
                 + "(SELECT id FROM usuarios WHERE correo_institucional <> ?)", ADMIN_CORREO);
@@ -353,6 +369,62 @@ class UsuarioPostgresIntegrationTest {
         mockMvc.perform(get("/api/usuarios")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + loginAdmin.token()))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @Order(11)
+    void respuestaActivoIncluyeIdsYEdicionPreservaDescripcion() {
+        Long tipoId = jdbcTemplate.queryForObject(
+                "SELECT id FROM tipos_activo WHERE nombre = 'Laptop'", Long.class);
+        Long ubicacionId = jdbcTemplate.queryForObject(
+                "SELECT id FROM ubicaciones WHERE codigo = 'OIT'", Long.class);
+
+        ActivoResponse creado = activoService.crear(
+                new ActivoRequest(
+                        tipoId, ubicacionId, "PAT-INTEGRACION", "SER-INTEGRACION",
+                        "Lenovo", "ThinkPad", "Descripción que debe conservarse",
+                        "DISPONIBLE", "BUENO"),
+                adminId);
+
+        ActivoResponse actualizado = activoService.actualizar(
+                creado.id(),
+                new ActivoRequest(
+                        creado.tipoActivoId(), creado.ubicacionId(), creado.codigoPatrimonial(),
+                        creado.numeroSerie(), creado.marca(), "ThinkPad actualizado",
+                        null, creado.estado(), creado.condicionFisica()),
+                adminId);
+
+        assertEquals(tipoId, actualizado.tipoActivoId());
+        assertEquals(ubicacionId, actualizado.ubicacionId());
+        assertEquals("Descripción que debe conservarse", actualizado.descripcion());
+        assertEquals("Descripción que debe conservarse", jdbcTemplate.queryForObject(
+                "SELECT descripcion FROM activos WHERE id = ?", String.class, creado.id()));
+    }
+
+    @Test
+    @Order(12)
+    void detalleSolicitudIncluyeTipoActivoIdReal() {
+        UsuarioResponse solicitante = crearUsuario(
+                "Sonia", "Solicitante", "solicitud@cultura.gob.pe",
+                Set.of("ROLE_SOLICITANTE"));
+        Long tipoId = jdbcTemplate.queryForObject(
+                "SELECT id FROM tipos_activo WHERE nombre = 'Laptop'", Long.class);
+        Long ubicacionId = jdbcTemplate.queryForObject(
+                "SELECT id FROM ubicaciones WHERE codigo = 'OIT'", Long.class);
+        activoService.crear(
+                new ActivoRequest(
+                        tipoId, ubicacionId, "PAT-SOLICITUD", null,
+                        "Dell", "Latitude", null, "DISPONIBLE", "BUENO"),
+                adminId);
+
+        SolicitudResponse solicitud = solicitudService.crear(
+                new SolicitudRequest(
+                        "Equipo para labores institucionales",
+                        List.of(new DetalleRequest(tipoId, "Con cámara"))),
+                solicitante.id());
+
+        assertEquals(tipoId, solicitud.detalles().get(0).tipoActivoId());
+        assertEquals("Laptop", solicitud.detalles().get(0).tipoActivo());
     }
 
     @Test

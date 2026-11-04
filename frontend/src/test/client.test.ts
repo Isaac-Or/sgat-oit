@@ -37,4 +37,13 @@ describe('cliente HTTP', () => {
     })
     expect(onUnauthorized).not.toHaveBeenCalled()
   })
+
+  it.each([
+    [400, 'Revisa los datos ingresados.'],
+    [404, 'No se encontró el recurso solicitado.'],
+  ])('presenta un mensaje seguro para HTTP %s sin cuerpo de error', async (status, message) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status })))
+
+    await expect(apiRequest('/api/recurso')).rejects.toMatchObject({ status, message })
+  })
 })

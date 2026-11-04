@@ -1,6 +1,7 @@
 package pe.gob.cultura.sgat.service;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -12,16 +13,20 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import pe.gob.cultura.sgat.dto.ActivoElegido;
 import pe.gob.cultura.sgat.dto.AtencionRequest;
+import pe.gob.cultura.sgat.dto.CancelarSolicitudRequest;
 import pe.gob.cultura.sgat.dto.DetalleRequest;
 import pe.gob.cultura.sgat.dto.DetalleResponse;
 import pe.gob.cultura.sgat.dto.SolicitudRequest;
 import pe.gob.cultura.sgat.dto.SolicitudResponse;
 import pe.gob.cultura.sgat.model.entity.Activo;
+import pe.gob.cultura.sgat.model.entity.ReservaActivo;
 import pe.gob.cultura.sgat.model.entity.Solicitud;
 import pe.gob.cultura.sgat.model.entity.SolicitudDetalle;
 import pe.gob.cultura.sgat.model.entity.TipoActivo;
 import pe.gob.cultura.sgat.model.entity.Usuario;
 import pe.gob.cultura.sgat.repository.ActivoRepository;
+import pe.gob.cultura.sgat.repository.AsignacionRepository;
+import pe.gob.cultura.sgat.repository.ReservaActivoRepository;
 import pe.gob.cultura.sgat.repository.SolicitudRepository;
 import pe.gob.cultura.sgat.repository.TipoActivoRepository;
 import pe.gob.cultura.sgat.repository.UsuarioRepository;
@@ -32,13 +37,18 @@ public class SolicitudService {
     private final SolicitudRepository solicitudRepository;
     private final TipoActivoRepository tipoActivoRepository;
     private final ActivoRepository activoRepository;
+    private final AsignacionRepository asignacionRepository;
+    private final ReservaActivoRepository reservaActivoRepository;
     private final UsuarioRepository usuarioRepository;
 
     public SolicitudService(SolicitudRepository solicitudRepository, TipoActivoRepository tipoActivoRepository,
-                            ActivoRepository activoRepository, UsuarioRepository usuarioRepository) {
+                            ActivoRepository activoRepository, AsignacionRepository asignacionRepository,
+                            ReservaActivoRepository reservaActivoRepository, UsuarioRepository usuarioRepository) {
         this.solicitudRepository = solicitudRepository;
         this.tipoActivoRepository = tipoActivoRepository;
         this.activoRepository = activoRepository;
+        this.asignacionRepository = asignacionRepository;
+        this.reservaActivoRepository = reservaActivoRepository;
         this.usuarioRepository = usuarioRepository;
     }
 
@@ -63,7 +73,7 @@ public class SolicitudService {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tipo de activo no válido"));
 
             // Compuerta del BPM: ¿disponible y sin duplicidad?
-            if (!activoRepository.existsByTipoActivoIdAndEstadoAndActivoLogicoTrue(tipo.getId(), "DISPONIBLE")) {
+            if (!activoRepository.existsDisponibleSinReservaNiAsignacion(tipo.getId())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                         "No hay equipos disponibles del tipo: " + tipo.getNombre());
             }
@@ -97,10 +107,10 @@ public class SolicitudService {
         return solicitudes.stream().map(this::aRespuesta).toList();
     }
 
-    // Aprueba (eligiendo el activo físico de cada detalle) o rechaza una solicitud (HU-06).
+    // Aprueba reservando el activo de cada detalle, o rechaza sin crear reservas (HU-06).
     @Transactional
     public SolicitudResponse atender(Long id, AtencionRequest request, Long administradorId) {
-        Solicitud solicitud = solicitudRepository.findById(id)
+        Solicitud solicitud = solicitudRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Solicitud no encontrada"));
         if (!"PENDIENTE".equals(solicitud.getEstado())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La solicitud ya fue atendida");
@@ -109,7 +119,7 @@ public class SolicitudService {
         String observaciones = request.observaciones() == null ? null : request.observaciones().trim();
 
         if (request.aprobada()) {
-            asignarActivos(solicitud, request.activos());
+            reservarActivos(solicitud, request.activos(), administradorId);
             solicitud.setEstado("APROBADA");
         } else {
             if (observaciones == null || observaciones.isEmpty()) {
@@ -125,37 +135,98 @@ public class SolicitudService {
         return aRespuesta(solicitudRepository.saveAndFlush(solicitud));
     }
 
-    private void asignarActivos(Solicitud solicitud, List<ActivoElegido> elegidos) {
+    @Transactional
+    public SolicitudResponse cancelar(Long id, CancelarSolicitudRequest request, Long administradorId) {
+        Solicitud solicitud = solicitudRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Solicitud no encontrada"));
+        if (!"APROBADA".equals(solicitud.getEstado())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Solo se puede cancelar una solicitud aprobada");
+        }
+
+        List<ReservaActivo> reservas = reservaActivoRepository.findActivasBySolicitudIdForUpdate(id);
+        if (reservas.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "La solicitud no tiene reservas activas para liberar");
+        }
+
+        String motivo = request.motivo().trim();
+        Usuario administrador = usuarioRepository.getReferenceById(administradorId);
+        reservas.forEach(reserva -> reserva.liberar(administrador, motivo));
+        reservaActivoRepository.saveAll(reservas);
+
+        solicitud.setEstado("CANCELADA");
+        solicitud.setModificadoPor(administradorId);
+        String observacionAnterior = solicitud.getObservacionesAtencion();
+        solicitud.setObservacionesAtencion(
+                (observacionAnterior == null || observacionAnterior.isBlank())
+                        ? "Cancelación: " + motivo
+                        : observacionAnterior + "\nCancelación: " + motivo);
+        return aRespuesta(solicitudRepository.saveAndFlush(solicitud));
+    }
+
+    private void reservarActivos(
+            Solicitud solicitud, List<ActivoElegido> elegidos, Long administradorId) {
         if (elegidos == null || elegidos.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Seleccione el activo para cada detalle");
         }
         Map<Long, Long> activoPorDetalle = new HashMap<>();
         for (ActivoElegido e : elegidos) {
-            activoPorDetalle.put(e.detalleId(), e.activoId());
+            if (activoPorDetalle.put(e.detalleId(), e.activoId()) != null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "No repita un detalle en la selección de activos");
+            }
         }
         if (new HashSet<>(activoPorDetalle.values()).size() != activoPorDetalle.size()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No puede asignar el mismo activo dos veces");
         }
 
+        Set<Long> detalleIds = solicitud.getDetalles().stream()
+                .map(SolicitudDetalle::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        if (!detalleIds.equals(activoPorDetalle.keySet())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Debe seleccionar exactamente un activo para cada detalle de la solicitud");
+        }
+
+        List<Long> activoIds = activoPorDetalle.values().stream().sorted().toList();
+        List<Activo> activosBloqueados = activoRepository.findAllByIdForUpdate(activoIds);
+        if (activosBloqueados.size() != activoIds.size()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Uno de los activos no existe");
+        }
+        Map<Long, Activo> activosPorId = activosBloqueados.stream()
+                .collect(java.util.stream.Collectors.toMap(Activo::getId, activo -> activo));
+        Usuario administrador = usuarioRepository.getReferenceById(administradorId);
+        List<ReservaActivo> nuevasReservas = new ArrayList<>();
+
         for (SolicitudDetalle detalle : solicitud.getDetalles()) {
             Long activoId = activoPorDetalle.get(detalle.getId());
-            if (activoId == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Falta seleccionar el activo del detalle " + detalle.getId());
-            }
-            Activo activo = activoRepository.findById(activoId)
-                    .filter(Activo::isActivoLogico)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Activo no encontrado: " + activoId));
-            if (!"DISPONIBLE".equals(activo.getEstado())) {
+            Activo activo = activosPorId.get(activoId);
+            if (!activo.isActivoLogico() || !"DISPONIBLE".equals(activo.getEstado())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
                         "El activo " + activo.getCodigoPatrimonial() + " no está disponible");
+            }
+            if (reservaActivoRepository.existsByActivoIdAndEstado(activoId, ReservaActivo.ACTIVA)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "El activo " + activo.getCodigoPatrimonial() + " ya está reservado");
+            }
+            if (asignacionRepository.existsByActivoIdAndFechaDevolucionRealIsNull(activoId)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "El activo " + activo.getCodigoPatrimonial() + " tiene una asignación física abierta");
             }
             if (!activo.getTipoActivo().getId().equals(detalle.getTipoActivo().getId())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "El activo " + activo.getCodigoPatrimonial() + " no corresponde al tipo solicitado");
             }
             detalle.setActivo(activo);
+
+            ReservaActivo reserva = new ReservaActivo();
+            reserva.setActivo(activo);
+            reserva.setSolicitudDetalle(detalle);
+            reserva.setUsuarioResponsable(administrador);
+            nuevasReservas.add(reserva);
         }
+        reservaActivoRepository.saveAllAndFlush(nuevasReservas);
     }
 
     private SolicitudResponse aRespuesta(Solicitud s) {
@@ -163,6 +234,7 @@ public class SolicitudService {
         List<DetalleResponse> detalles = s.getDetalles().stream()
                 .map(d -> new DetalleResponse(
                         d.getId(),
+                        d.getTipoActivo().getId(),
                         d.getTipoActivo().getNombre(),
                         d.getActivo() == null ? null : d.getActivo().getCodigoPatrimonial(),
                         d.getObservaciones()))
