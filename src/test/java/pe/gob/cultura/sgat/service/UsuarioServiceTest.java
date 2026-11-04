@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,10 +19,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.server.ResponseStatusException;
 import pe.gob.cultura.sgat.dto.CrearUsuarioRequest;
+import pe.gob.cultura.sgat.dto.PaginaResponse;
 import pe.gob.cultura.sgat.dto.UsuarioResponse;
 import pe.gob.cultura.sgat.model.entity.Rol;
 import pe.gob.cultura.sgat.model.entity.Usuario;
@@ -151,6 +156,91 @@ class UsuarioServiceTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
         verify(usuarioRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void listaUsuariosActivosConPaginacionYOrdenEstable() {
+        Usuario primero = usuario(10L, "ana@cultura.gob.pe", true, true,
+                rol("ROLE_SOLICITANTE", true));
+        primero.setNombres("Ana");
+        primero.setApellidos("Alvarez");
+        Usuario segundo = usuario(11L, "luis@cultura.gob.pe", true, true,
+                rol("ROLE_TECNICO", true));
+        segundo.setNombres("Luis");
+        segundo.setApellidos("Bravo");
+        when(usuarioRepository.findById(ADMIN_ID)).thenReturn(Optional.of(administrador));
+        when(usuarioRepository.findByActivoLogicoTrue(any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(primero, segundo),
+                        org.springframework.data.domain.PageRequest.of(1, 2), 5));
+
+        PaginaResponse<UsuarioResponse> response = usuarioService.listar(1, 2, ADMIN_ID);
+
+        assertEquals(1, response.pagina());
+        assertEquals(2, response.tamanio());
+        assertEquals(5, response.totalElementos());
+        assertEquals(3, response.totalPaginas());
+        assertEquals(List.of(10L, 11L), response.contenido().stream()
+                .map(UsuarioResponse::id).toList());
+        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+        verify(usuarioRepository).findByActivoLogicoTrue(captor.capture());
+        Pageable pageable = captor.getValue();
+        assertEquals(1, pageable.getPageNumber());
+        assertEquals(2, pageable.getPageSize());
+        assertEquals(Sort.Direction.ASC, pageable.getSort().getOrderFor("apellidos").getDirection());
+        assertEquals(Sort.Direction.ASC, pageable.getSort().getOrderFor("nombres").getDirection());
+        assertEquals(Sort.Direction.ASC, pageable.getSort().getOrderFor("id").getDirection());
+    }
+
+    @Test
+    void listadoUsaConsultaQueExcluyeEliminadosLogicamente() {
+        when(usuarioRepository.findById(ADMIN_ID)).thenReturn(Optional.of(administrador));
+        when(usuarioRepository.findByActivoLogicoTrue(any(Pageable.class)))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        PaginaResponse<UsuarioResponse> response = usuarioService.listar(0, 20, ADMIN_ID);
+
+        assertTrue(response.contenido().isEmpty());
+        verify(usuarioRepository).findByActivoLogicoTrue(any(Pageable.class));
+        verify(usuarioRepository, never()).findAll(any(Pageable.class));
+    }
+
+    @Test
+    void obtieneUsuarioActivoPorId() {
+        Usuario usuario = usuario(15L, "consulta@cultura.gob.pe", true, true,
+                rol("ROLE_SOLICITANTE", true));
+        usuario.setNombres("Consulta");
+        usuario.setApellidos("Usuario");
+        when(usuarioRepository.findById(ADMIN_ID)).thenReturn(Optional.of(administrador));
+        when(usuarioRepository.findByIdAndActivoLogicoTrue(15L)).thenReturn(Optional.of(usuario));
+
+        UsuarioResponse response = usuarioService.obtener(15L, ADMIN_ID);
+
+        assertEquals(15L, response.id());
+        assertEquals("consulta@cultura.gob.pe", response.correoInstitucional());
+    }
+
+    @Test
+    void respondeNotFoundParaUsuarioInexistente() {
+        when(usuarioRepository.findById(ADMIN_ID)).thenReturn(Optional.of(administrador));
+        when(usuarioRepository.findByIdAndActivoLogicoTrue(999L)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class, () -> usuarioService.obtener(999L, ADMIN_ID));
+
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
+        assertEquals("Usuario no encontrado", ex.getReason());
+    }
+
+    @Test
+    void rechazaListadoSiElAdministradorEstaDeshabilitado() {
+        administrador.setHabilitado(false);
+        when(usuarioRepository.findById(ADMIN_ID)).thenReturn(Optional.of(administrador));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class, () -> usuarioService.listar(0, 20, ADMIN_ID));
+
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+        verify(usuarioRepository, never()).findByActivoLogicoTrue(any(Pageable.class));
     }
 
     private void prepararCreacion(CrearUsuarioRequest request, Rol rolSolicitado) {

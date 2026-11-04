@@ -1,6 +1,8 @@
 package pe.gob.cultura.sgat.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import io.jsonwebtoken.Claims;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -20,13 +23,16 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import pe.gob.cultura.sgat.config.JwtAuthFilter;
 import pe.gob.cultura.sgat.config.JwtService;
 import pe.gob.cultura.sgat.config.SecurityConfig;
 import pe.gob.cultura.sgat.dto.CrearUsuarioRequest;
+import pe.gob.cultura.sgat.dto.PaginaResponse;
 import pe.gob.cultura.sgat.dto.UsuarioResponse;
 import pe.gob.cultura.sgat.model.entity.Permiso;
 import pe.gob.cultura.sgat.model.entity.Rol;
@@ -212,6 +218,91 @@ class UsuarioControllerSecurityTest {
         mockMvc.perform(get("/api/usuarios/7")
                         .header("Authorization", "Bearer token-vigente"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listaUsuariosComoAdministradorSinExponerDatosSensibles() throws Exception {
+        autenticarComo(usuarioVigente(1L, "admin@cultura.gob.pe", rol("ROLE_ADMIN", true)));
+        UsuarioResponse usuario = new UsuarioResponse(
+                10L, "Ana", "Pérez", "ana@cultura.gob.pe", true,
+                Set.of("ROLE_SOLICITANTE"));
+        PaginaResponse<UsuarioResponse> pagina = new PaginaResponse<>(
+                List.of(usuario), 0, 20, 1, 1, true, true);
+        when(usuarioService.listar(0, 20, 1L)).thenReturn(pagina);
+
+        mockMvc.perform(get("/api/usuarios")
+                        .header("Authorization", "Bearer token-vigente"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.contenido[0].id").value(10))
+                .andExpect(jsonPath("$.contenido[0].correoInstitucional").value("ana@cultura.gob.pe"))
+                .andExpect(jsonPath("$.contenido[0].password").doesNotExist())
+                .andExpect(jsonPath("$.contenido[0].passwordHash").doesNotExist())
+                .andExpect(jsonPath("$.totalElementos").value(1));
+    }
+
+    @Test
+    void respetaParametrosDePaginacion() throws Exception {
+        autenticarComo(usuarioVigente(1L, "admin@cultura.gob.pe", rol("ROLE_ADMIN", true)));
+        when(usuarioService.listar(2, 5, 1L)).thenReturn(
+                new PaginaResponse<>(List.of(), 2, 5, 12, 3, false, true));
+
+        mockMvc.perform(get("/api/usuarios?page=2&size=5")
+                        .header("Authorization", "Bearer token-vigente"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pagina").value(2))
+                .andExpect(jsonPath("$.tamanio").value(5))
+                .andExpect(jsonPath("$.totalPaginas").value(3));
+
+        verify(usuarioService).listar(2, 5, 1L);
+    }
+
+    @Test
+    void rechazaListadoSinToken() throws Exception {
+        mockMvc.perform(get("/api/usuarios"))
+                .andExpect(status().isUnauthorized());
+
+        verify(usuarioService, never()).listar(anyInt(), anyInt(), anyLong());
+    }
+
+    @Test
+    void rechazaListadoConRolInsuficiente() throws Exception {
+        autenticarComo(usuarioVigente(2L, "usuario@cultura.gob.pe", rol("ROLE_SOLICITANTE", true)));
+
+        mockMvc.perform(get("/api/usuarios")
+                        .header("Authorization", "Bearer token-vigente"))
+                .andExpect(status().isForbidden());
+
+        verify(usuarioService, never()).listar(anyInt(), anyInt(), anyLong());
+    }
+
+    @Test
+    void obtieneUsuarioPorIdComoAdministrador() throws Exception {
+        autenticarComo(usuarioVigente(1L, "admin@cultura.gob.pe", rol("ROLE_ADMIN", true)));
+        when(usuarioService.obtener(10L, 1L)).thenReturn(new UsuarioResponse(
+                10L, "Ana", "Pérez", "ana@cultura.gob.pe", true,
+                Set.of("ROLE_SOLICITANTE")));
+
+        mockMvc.perform(get("/api/usuarios/10")
+                        .header("Authorization", "Bearer token-vigente"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(10))
+                .andExpect(jsonPath("$.password").doesNotExist())
+                .andExpect(jsonPath("$.passwordHash").doesNotExist());
+    }
+
+    @Test
+    void respondeNotFoundSinFiltrarDatosInternos() throws Exception {
+        autenticarComo(usuarioVigente(1L, "admin@cultura.gob.pe", rol("ROLE_ADMIN", true)));
+        when(usuarioService.obtener(999L, 1L)).thenThrow(
+                new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+
+        mockMvc.perform(get("/api/usuarios/999")
+                        .header("Authorization", "Bearer token-vigente"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.mensaje").value("Usuario no encontrado"))
+                .andExpect(jsonPath("$.password").doesNotExist())
+                .andExpect(jsonPath("$.passwordHash").doesNotExist())
+                .andExpect(jsonPath("$.exception").doesNotExist());
     }
 
     @Test

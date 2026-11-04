@@ -2,10 +2,15 @@
 package pe.gob.cultura.sgat.service;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashSet;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -13,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import pe.gob.cultura.sgat.dto.CrearUsuarioRequest;
+import pe.gob.cultura.sgat.dto.PaginaResponse;
 import pe.gob.cultura.sgat.dto.UsuarioResponse;
 import pe.gob.cultura.sgat.model.entity.Rol;
 import pe.gob.cultura.sgat.model.entity.Usuario;
@@ -43,19 +49,7 @@ public class UsuarioService {
             CrearUsuarioRequest request,
             Long administradorId) {
 
-        Usuario administrador = usuarioRepository.findById(administradorId)
-                .filter(u -> u.isHabilitado() && u.isActivoLogico())
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.FORBIDDEN, "Administrador no autorizado"));
-
-        boolean tieneRolAdmin = administrador.getRoles().stream()
-                .anyMatch(r -> r.isActivoLogico()
-                        && "ROLE_ADMIN".equals(r.getCodigo()));
-
-        if (!tieneRolAdmin) {
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN, "Permisos insuficientes");
-        }
+        validarAdministrador(administradorId);
 
         Set<String> codigosRoles = request.roles();
         if (codigosRoles == null || codigosRoles.isEmpty()) {
@@ -101,16 +95,44 @@ public class UsuarioService {
 
         Usuario guardado = usuarioRepository.saveAndFlush(usuario);
 
-        return new UsuarioResponse(
-                guardado.getId(),
-                guardado.getNombres(),
-                guardado.getApellidos(),
-                guardado.getCorreoInstitucional(),
-                guardado.isHabilitado(),
-                guardado.getRoles().stream()
-                        .map(Rol::getCodigo)
-                        .collect(Collectors.toSet())
-        );
+        return aRespuesta(guardado);
+    }
+
+    @Transactional(readOnly = true)
+    public PaginaResponse<UsuarioResponse> listar(int pagina, int tamanio, Long administradorId) {
+        validarAdministrador(administradorId);
+        if (pagina < 0 || tamanio < 1 || tamanio > 100) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Parámetros de paginación inválidos");
+        }
+
+        Sort ordenEstable = Sort.by(
+                Sort.Order.asc("apellidos"),
+                Sort.Order.asc("nombres"),
+                Sort.Order.asc("id"));
+        Page<Usuario> resultado = usuarioRepository.findByActivoLogicoTrue(
+                PageRequest.of(pagina, tamanio, ordenEstable));
+        List<UsuarioResponse> contenido = resultado.getContent().stream()
+                .map(this::aRespuesta)
+                .toList();
+
+        return new PaginaResponse<>(
+                contenido,
+                resultado.getNumber(),
+                resultado.getSize(),
+                resultado.getTotalElements(),
+                resultado.getTotalPages(),
+                resultado.isFirst(),
+                resultado.isLast());
+    }
+
+    @Transactional(readOnly = true)
+    public UsuarioResponse obtener(Long id, Long administradorId) {
+        validarAdministrador(administradorId);
+        Usuario usuario = usuarioRepository.findByIdAndActivoLogicoTrue(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Usuario no encontrado"));
+        return aRespuesta(usuario);
     }
 
     private String cifrarPassword(String password) {
@@ -119,5 +141,35 @@ public class UsuarioService {
                     HttpStatus.BAD_REQUEST, "La contraseña excede el máximo permitido");
         }
         return passwordEncoder.encode(password);
+    }
+
+    private void validarAdministrador(Long administradorId) {
+        Usuario administrador = usuarioRepository.findById(administradorId)
+                .filter(u -> u.isHabilitado() && u.isActivoLogico())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.FORBIDDEN, "Administrador no autorizado"));
+
+        boolean tieneRolAdmin = administrador.getRoles().stream()
+                .anyMatch(rol -> rol.isActivoLogico()
+                        && "ROLE_ADMIN".equals(rol.getCodigo()));
+        if (!tieneRolAdmin) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN, "Permisos insuficientes");
+        }
+    }
+
+    private UsuarioResponse aRespuesta(Usuario usuario) {
+        Set<String> rolesVigentes = usuario.getRoles().stream()
+                .filter(Rol::isActivoLogico)
+                .map(Rol::getCodigo)
+                .sorted()
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return new UsuarioResponse(
+                usuario.getId(),
+                usuario.getNombres(),
+                usuario.getApellidos(),
+                usuario.getCorreoInstitucional(),
+                usuario.isHabilitado(),
+                rolesVigentes);
     }
 }
