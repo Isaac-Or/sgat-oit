@@ -45,10 +45,13 @@ public class AdminBootstrap implements CommandLineRunner {
             return;
         }
         usuarioRepository.findByCorreoInstitucional(CORREO_ADMIN).ifPresent(admin -> {
-            admin.setPasswordHash(passwordEncoder.encode(adminPassword));
-            admin.setHabilitado(true);
-            usuarioRepository.save(admin);
+            if (!admin.isHabilitado()) {
+                admin.setPasswordHash(passwordEncoder.encode(adminPassword));
+                admin.setHabilitado(true);
+                usuarioRepository.save(admin);
+            }
         });
+
         if (usuariosDemo) {
             crearUsuario("solicitante@cultura.gob.pe", "Colaborador", "Demo", "ROLE_SOLICITANTE");
             crearUsuario("tecnico@cultura.gob.pe", "Tecnico", "Demo", "ROLE_TECNICO");
