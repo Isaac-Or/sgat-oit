@@ -11,5 +11,6 @@ public record SolicitudResponse(
         String motivo,
         String estado,
         String observacionesAtencion,
-        List<DetalleResponse> detalles) {
+        List<DetalleResponse> detalles,
+        boolean entregable) {
 }

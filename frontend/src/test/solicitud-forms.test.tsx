@@ -13,6 +13,7 @@ const request = {
   motivo: 'Trabajo remoto',
   estado: 'PENDIENTE' as const,
   observacionesAtencion: null,
+  entregable: false,
   detalles: [{ id: 21, tipoActivoId: 3, tipoActivo: 'Laptop', activo: null, observaciones: 'Con cámara' }],
 }
 

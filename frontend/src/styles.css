@@ -363,6 +363,8 @@ h1, h2, h3, p { margin-top: 0; }
 
 /* Inventory */
 .assets-table { min-width: 1050px; }
+.loans-table { min-width: 1120px; }
+.loans-table { min-width: 1120px; }
 .assets-table td:first-child strong, .cell-main { display: block; color: var(--slate-900); font-size: 12px; }
 .assets-table td:first-child span, .cell-subtle { display: block; margin-top: 3px; color: var(--slate-500); font-size: 10px; }
 .cell-stack strong, .cell-stack span { display: block; }

@@ -28,6 +28,10 @@ public interface ActivoRepository extends JpaRepository<Activo, Long> {
     @Query("select a from Activo a where a.id in :ids order by a.id")
     List<Activo> findAllByIdForUpdate(@Param("ids") Collection<Long> ids);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from Activo a where a.id = :id")
+    java.util.Optional<Activo> findByIdForUpdate(@Param("id") Long id);
+
     @Query("select count(a) > 0 from Activo a "
             + "where a.tipoActivo.id = :tipoId and a.estado = 'DISPONIBLE' and a.activoLogico = true "
             + "and not exists (select r.id from ReservaActivo r "

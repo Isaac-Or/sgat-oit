@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { cancelarSolicitud, listarMisSolicitudes, listarSolicitudes, type SolicitudResponse } from '../api/solicitudes'
+import { cancelarSolicitud, entregarSolicitud, listarMisSolicitudes, listarSolicitudes, type SolicitudResponse } from '../api/solicitudes'
 import { SolicitudesPage } from '../pages/SolicitudesPage'
 
 const auth = vi.hoisted(() => ({ roles: ['ROLE_SOLICITANTE'] as string[] }))
@@ -16,6 +16,7 @@ vi.mock('../api/solicitudes', async (importOriginal) => {
     crearSolicitud: vi.fn(),
     atenderSolicitud: vi.fn(),
     cancelarSolicitud: vi.fn(),
+    entregarSolicitud: vi.fn(),
   }
 })
 vi.mock('../api/activos', async (importOriginal) => {
@@ -32,6 +33,7 @@ const request: SolicitudResponse = {
   estado: 'PENDIENTE',
   observacionesAtencion: null,
   detalles: [{ id: 21, tipoActivoId: 3, tipoActivo: 'Laptop', activo: null, observaciones: null }],
+  entregable: false,
 }
 
 describe('bandejas de solicitudes por rol', () => {
@@ -39,6 +41,7 @@ describe('bandejas de solicitudes por rol', () => {
     vi.mocked(listarMisSolicitudes).mockReset().mockResolvedValue([request])
     vi.mocked(listarSolicitudes).mockReset().mockResolvedValue([request])
     vi.mocked(cancelarSolicitud).mockReset().mockResolvedValue({ ...request, estado: 'CANCELADA' })
+    vi.mocked(entregarSolicitud).mockReset().mockResolvedValue([])
   })
 
   it('consulta solicitudes propias y permite crear para ROLE_SOLICITANTE', async () => {
@@ -75,6 +78,7 @@ describe('bandejas de solicitudes por rol', () => {
     vi.mocked(listarSolicitudes).mockResolvedValueOnce([{
       ...request,
       estado: 'APROBADA',
+      entregable: true,
       detalles: [{ ...request.detalles[0], activo: 'PAT-001' }],
     }]).mockResolvedValueOnce([])
     const user = userEvent.setup()
@@ -86,5 +90,26 @@ describe('bandejas de solicitudes por rol', () => {
 
     expect(cancelarSolicitud).toHaveBeenCalledWith(5, { motivo: 'Necesidad retirada' })
     expect(await screen.findByText('La solicitud fue cancelada y sus reservas quedaron liberadas.')).toBeInTheDocument()
+  })
+
+  it('registra la entrega completa de una solicitud aprobada', async () => {
+    auth.roles = ['ROLE_ADMIN']
+    vi.mocked(listarSolicitudes).mockResolvedValueOnce([{
+      ...request,
+      estado: 'APROBADA',
+      entregable: true,
+      detalles: [{ ...request.detalles[0], activo: 'PAT-001' }],
+    }]).mockResolvedValueOnce([])
+    const user = userEvent.setup()
+    render(<MemoryRouter><SolicitudesPage /></MemoryRouter>)
+
+    await user.click(await screen.findByRole('button', { name: 'Registrar entrega' }))
+    await user.type(screen.getByLabelText('Fecha estimada de devolución'), '2027-01-15T12:00')
+    await user.click(screen.getByRole('button', { name: 'Confirmar entrega' }))
+
+    expect(entregarSolicitud).toHaveBeenCalledWith(5, expect.objectContaining({
+      fechaDevolucionEstimada: expect.any(String), observaciones: null,
+    }))
+    expect(await screen.findByText('La entrega física fue registrada correctamente.')).toBeInTheDocument()
   })
 })

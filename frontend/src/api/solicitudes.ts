@@ -30,6 +30,7 @@ export interface SolicitudResponse {
   estado: EstadoSolicitud
   observacionesAtencion: string | null
   detalles: DetalleResponse[]
+  entregable: boolean
 }
 
 export interface ActivoElegido {
@@ -45,6 +46,11 @@ export interface AtencionRequest {
 
 export interface CancelarSolicitudRequest {
   motivo: string
+}
+
+export interface EntregaSolicitudRequest {
+  fechaDevolucionEstimada: string
+  observaciones: string | null
 }
 
 export function crearSolicitud(request: SolicitudRequest) {
@@ -66,4 +72,10 @@ export function atenderSolicitud(id: number, request: AtencionRequest) {
 
 export function cancelarSolicitud(id: number, request: CancelarSolicitudRequest) {
   return apiRequest<SolicitudResponse>(`/api/solicitudes/${id}/cancelacion`, { method: 'PUT', body: request })
+}
+
+export function entregarSolicitud(id: number, request: EntregaSolicitudRequest) {
+  return apiRequest<import('./asignaciones').AsignacionResponse[]>(`/api/solicitudes/${id}/entrega`, {
+    method: 'POST', body: request,
+  })
 }

@@ -5,6 +5,7 @@ import { AccessDeniedPage } from './pages/AccessDeniedPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { InventarioPage } from './pages/InventarioPage'
 import { LoginPage } from './pages/LoginPage'
+import { PrestamosPage } from './pages/PrestamosPage'
 import { SolicitudesPage } from './pages/SolicitudesPage'
 import { UsuariosPage } from './pages/UsuariosPage'
 
@@ -19,6 +20,7 @@ export function AppRoutes() {
           <Route path="solicitudes" element={<SolicitudesPage />} />
           <Route path="acceso-denegado" element={<AccessDeniedPage />} />
           <Route element={<RequireAdmin />}>
+            <Route path="prestamos" element={<PrestamosPage />} />
             <Route path="usuarios" element={<UsuariosPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

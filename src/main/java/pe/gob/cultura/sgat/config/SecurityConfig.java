@@ -46,9 +46,11 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/activos").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/activos/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.POST, "/api/solicitudes").hasRole("SOLICITANTE")
+                .requestMatchers(HttpMethod.POST, "/api/solicitudes/*/entrega").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.GET, "/api/solicitudes/mis-solicitudes").hasRole("SOLICITANTE")
                 .requestMatchers(HttpMethod.GET, "/api/solicitudes").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.PUT, "/api/solicitudes/**").hasRole("ADMIN")
+                .requestMatchers("/api/asignaciones", "/api/asignaciones/**").hasRole("ADMIN")
                 .anyRequest().authenticated())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
@@ -62,8 +64,17 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource(
             @Value("${cors.allowed-origins}") List<String> origenes) {
+        List<String> origenesPermitidos = origenes.stream()
+                .map(String::trim)
+                .filter(origen -> !origen.isEmpty())
+                .toList();
+        if (origenesPermitidos.isEmpty()
+                || origenesPermitidos.stream().anyMatch(origen -> origen.contains("*"))) {
+            throw new IllegalArgumentException(
+                    "CORS requiere una lista de origenes explicitos, sin comodines");
+        }
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOriginPatterns(origenes);
+        config.setAllowedOrigins(origenesPermitidos);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

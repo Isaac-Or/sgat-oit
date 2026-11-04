@@ -116,7 +116,7 @@ export function InventarioPage() {
             <thead><tr><th>Activo</th><th>Tipo</th><th>Ubicación</th><th>Estado</th><th>Condición</th><th><span className="sr-only">Acciones</span></th></tr></thead>
             <tbody>{activos.map((activo) => <tr key={activo.id}>
               <td><div className="asset-main"><strong>{activo.codigoPatrimonial}</strong><span>{activo.marca} {activo.modelo}</span><small>Serie: {activo.numeroSerie || 'No registrada'}</small></div></td>
-              <td><strong className="cell-primary">{activo.tipoActivo}</strong><span className="cell-secondary">{activo.categoria}</span></td>
+              <td><strong className="cell-primary">Tipo: {activo.tipoActivo}</strong><span className="cell-secondary">Categoría: {activo.categoria}</span></td>
               <td>{activo.ubicacion}</td>
               <td><div className="asset-status-stack">
                 <span className={`status-badge status-${activo.estado.toLocaleLowerCase().replaceAll('_', '-')}`}><span />{etiquetaCodigo(activo.estado)}</span>

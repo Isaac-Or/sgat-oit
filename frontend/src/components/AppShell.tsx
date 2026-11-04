@@ -16,6 +16,7 @@ const navItems: NavItem[] = [
   { label: 'Inicio', to: '/', icon: 'dashboard' },
   { label: 'Inventario', to: '/inventario', icon: 'inventory' },
   { label: 'Solicitudes', to: '/solicitudes', icon: 'requests', roles: ['ROLE_ADMIN', 'ROLE_SOLICITANTE'] },
+  { label: 'Préstamos', to: '/prestamos', icon: 'history', adminOnly: true },
   { label: 'Usuarios', to: '/usuarios', icon: 'users', adminOnly: true },
 ]
 
@@ -23,6 +24,7 @@ const routeTitles: Record<string, string> = {
   '/': 'Panel de inicio',
   '/inventario': 'Inventario tecnológico',
   '/solicitudes': 'Solicitudes',
+  '/prestamos': 'Préstamos de activos',
   '/usuarios': 'Administración de usuarios',
   '/acceso-denegado': 'Acceso restringido',
 }

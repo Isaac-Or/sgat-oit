@@ -30,13 +30,17 @@ import pe.gob.cultura.sgat.dto.ActivoElegido;
 import pe.gob.cultura.sgat.dto.ActivoRequest;
 import pe.gob.cultura.sgat.dto.ActivoResponse;
 import pe.gob.cultura.sgat.dto.AtencionRequest;
+import pe.gob.cultura.sgat.dto.AsignacionResponse;
 import pe.gob.cultura.sgat.dto.CancelarSolicitudRequest;
+import pe.gob.cultura.sgat.dto.DevolucionAsignacionRequest;
 import pe.gob.cultura.sgat.dto.DetalleRequest;
+import pe.gob.cultura.sgat.dto.EntregaSolicitudRequest;
 import pe.gob.cultura.sgat.dto.SolicitudRequest;
 import pe.gob.cultura.sgat.dto.SolicitudResponse;
 import pe.gob.cultura.sgat.model.entity.ReservaActivo;
 import pe.gob.cultura.sgat.repository.ReservaActivoRepository;
 import pe.gob.cultura.sgat.service.ActivoService;
+import pe.gob.cultura.sgat.service.AsignacionService;
 import pe.gob.cultura.sgat.service.SolicitudService;
 
 @SpringBootTest
@@ -57,6 +61,7 @@ class ReservaActivoPostgresIntegrationTest {
     }
 
     @Autowired private ActivoService activoService;
+    @Autowired private AsignacionService asignacionService;
     @Autowired private SolicitudService solicitudService;
     @Autowired private ReservaActivoRepository reservaRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -242,6 +247,242 @@ class ReservaActivoPostgresIntegrationTest {
                 """, activo.id(), detalleId, adminId));
     }
 
+    @Test
+    void entregaTodosLosDetallesConsumeReservasYCambiaActivosAAsignado() {
+        ActivoResponse laptop = crearActivo("ENTREGA-L", laptopId);
+        ActivoResponse monitor = crearActivo("ENTREGA-M", monitorId);
+        SolicitudResponse solicitud = crearSolicitud(solicitanteUnoId, laptopId, monitorId);
+        aprobar(solicitud, List.of(laptop.id(), monitor.id()));
+
+        List<AsignacionResponse> asignaciones = entregar(solicitud.id());
+
+        assertEquals(2, asignaciones.size());
+        assertTrue(asignaciones.stream().allMatch(AsignacionResponse::abierta));
+        assertTrue(asignaciones.stream()
+                .allMatch(item -> "Reserva Uno Prueba".equals(item.usuarioReceptor())));
+        assertTrue(asignaciones.stream()
+                .allMatch(item -> "Administrador SGAT-OIT".equals(item.entregadoPor())));
+        assertTrue(asignaciones.stream().allMatch(a -> "ASIGNADO".equals(a.estadoActivo())));
+        assertEquals(0, reservaRepository.countBySolicitudDetalleSolicitudIdAndEstado(
+                solicitud.id(), ReservaActivo.ACTIVA));
+        assertEquals(2, reservaRepository.countBySolicitudDetalleSolicitudIdAndEstado(
+                solicitud.id(), ReservaActivo.CONSUMIDA));
+        assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM asignaciones WHERE fecha_devolucion_real IS NULL",
+                Integer.class));
+        assertEquals(2, jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM historial_estados_activo
+                WHERE activo_id IN (?, ?) AND estado_anterior = 'DISPONIBLE' AND estado_nuevo = 'ASIGNADO'
+                """, Integer.class, laptop.id(), monitor.id()));
+    }
+
+    @Test
+    void bloqueaEntregaDuplicadaSinCrearAsignacionesAdicionales() {
+        ActivoResponse activo = crearActivo("ENTREGA-DUP", laptopId);
+        SolicitudResponse solicitud = crearSolicitud(solicitanteUnoId, laptopId);
+        aprobar(solicitud, List.of(activo.id()));
+        entregar(solicitud.id());
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> entregar(solicitud.id()));
+
+        assertEquals(HttpStatus.CONFLICT, error.getStatusCode());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM asignaciones WHERE activo_id = ?", Integer.class, activo.id()));
+    }
+
+    @Test
+    void devolucionCierraAsignacionYDejaActivoDisponible() {
+        ActivoResponse activo = crearActivo("DEVOLUCION-OK", laptopId);
+        SolicitudResponse solicitud = crearSolicitud(solicitanteUnoId, laptopId);
+        aprobar(solicitud, List.of(activo.id()));
+        AsignacionResponse asignacion = entregar(solicitud.id()).get(0);
+
+        AsignacionResponse devuelta = asignacionService.devolver(asignacion.id(),
+                new DevolucionAsignacionRequest("REGULAR", "DISPONIBLE", "Equipo recibido"),
+                adminId);
+
+        assertFalse(devuelta.abierta());
+        assertNotNull(devuelta.fechaDevolucionReal());
+        assertEquals("DISPONIBLE", devuelta.estadoActivo());
+        assertEquals("REGULAR", devuelta.condicionFisica());
+        assertEquals("Reserva Uno Prueba", devuelta.usuarioReceptor());
+        assertEquals("Administrador SGAT-OIT", devuelta.entregadoPor());
+        assertEquals("Administrador SGAT-OIT", devuelta.recibidoDevolucionPor());
+        assertEquals(adminId, jdbcTemplate.queryForObject(
+                "SELECT recibido_devolucion_por FROM asignaciones WHERE id = ?",
+                Long.class, asignacion.id()));
+        assertEquals(1, jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM historial_estados_activo
+                WHERE activo_id = ? AND estado_anterior = 'ASIGNADO' AND estado_nuevo = 'DISPONIBLE'
+                """, Integer.class, activo.id()));
+    }
+
+    @Test
+    void devolucionPuedeEnviarActivoAMantenimiento() {
+        ActivoResponse activo = crearActivo("DEVOLUCION-MANT", laptopId);
+        SolicitudResponse solicitud = crearSolicitud(solicitanteUnoId, laptopId);
+        aprobar(solicitud, List.of(activo.id()));
+        AsignacionResponse asignacion = entregar(solicitud.id()).get(0);
+
+        AsignacionResponse devuelta = asignacionService.devolver(asignacion.id(),
+                new DevolucionAsignacionRequest("MALO", "EN_MANTENIMIENTO", "Requiere revisión"),
+                adminId);
+
+        assertEquals("EN_MANTENIMIENTO", devuelta.estadoActivo());
+        assertEquals("MALO", devuelta.condicionFisica());
+        assertEquals("Requiere revisión", devuelta.observacionesRetorno());
+    }
+
+    @Test
+    void bloqueaDevolucionDuplicada() {
+        ActivoResponse activo = crearActivo("DEVOLUCION-DUP", laptopId);
+        SolicitudResponse solicitud = crearSolicitud(solicitanteUnoId, laptopId);
+        aprobar(solicitud, List.of(activo.id()));
+        AsignacionResponse asignacion = entregar(solicitud.id()).get(0);
+        DevolucionAsignacionRequest request = new DevolucionAsignacionRequest(
+                "BUENO", "DISPONIBLE", null);
+        asignacionService.devolver(asignacion.id(), request, adminId);
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> asignacionService.devolver(asignacion.id(), request, adminId));
+
+        assertEquals(HttpStatus.CONFLICT, error.getStatusCode());
+    }
+
+    @Test
+    void errorEnUnDetalleRevierteEntregaCompleta() {
+        ActivoResponse laptop = crearActivo("ENTREGA-ROLL-L", laptopId);
+        ActivoResponse monitor = crearActivo("ENTREGA-ROLL-M", monitorId);
+        SolicitudResponse solicitud = crearSolicitud(solicitanteUnoId, laptopId, monitorId);
+        aprobar(solicitud, List.of(laptop.id(), monitor.id()));
+        jdbcTemplate.update(
+                "UPDATE activos SET estado = 'EN_MANTENIMIENTO', modificado_por = ? WHERE id = ?",
+                adminId, monitor.id());
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> entregar(solicitud.id()));
+
+        assertEquals(HttpStatus.CONFLICT, error.getStatusCode());
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM asignaciones WHERE solicitud_detalle_id IN "
+                        + "(SELECT id FROM solicitud_detalles WHERE solicitud_id = ?)",
+                Integer.class, solicitud.id()));
+        assertEquals(2, reservaRepository.countBySolicitudDetalleSolicitudIdAndEstado(
+                solicitud.id(), ReservaActivo.ACTIVA));
+        assertEquals("DISPONIBLE", jdbcTemplate.queryForObject(
+                "SELECT estado FROM activos WHERE id = ?", String.class, laptop.id()));
+    }
+
+    @Test
+    void entregaYCancelacionConcurrentesSeSerializanSinEstadoParcial() throws Exception {
+        ActivoResponse activo = crearActivo("ENTREGA-CANCEL", laptopId);
+        SolicitudResponse solicitud = crearSolicitud(solicitanteUnoId, laptopId);
+        aprobar(solicitud, List.of(activo.id()));
+
+        List<ResultadoOperacion> resultados = ejecutarConcurrentemente(List.of(
+                () -> asignacionService.entregar(solicitud.id(), solicitudEntrega(), adminId),
+                () -> solicitudService.cancelar(solicitud.id(),
+                        new CancelarSolicitudRequest("Cancelación concurrente"), adminId)));
+
+        assertEquals(1, resultados.stream().filter(ResultadoOperacion::exitosa).count());
+        assertEquals(1, resultados.stream().filter(resultado -> resultado.fallo() != null).count());
+        Throwable fallo = resultados.stream().map(ResultadoOperacion::fallo)
+                .filter(java.util.Objects::nonNull).findFirst().orElseThrow();
+        assertTrue(fallo instanceof ResponseStatusException, fallo.toString());
+        assertEquals(HttpStatus.CONFLICT, ((ResponseStatusException) fallo).getStatusCode());
+
+        String estado = estadoSolicitud(solicitud.id());
+        int asignaciones = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM asignaciones WHERE activo_id = ?", Integer.class, activo.id());
+        if ("CANCELADA".equals(estado)) {
+            assertEquals(0, asignaciones);
+            assertEquals(1, reservaRepository.countByActivoIdAndEstado(
+                    activo.id(), ReservaActivo.LIBERADA));
+            assertEquals("DISPONIBLE", jdbcTemplate.queryForObject(
+                    "SELECT estado FROM activos WHERE id = ?", String.class, activo.id()));
+        } else {
+            assertEquals("APROBADA", estado);
+            assertEquals(1, asignaciones);
+            assertEquals(1, reservaRepository.countByActivoIdAndEstado(
+                    activo.id(), ReservaActivo.CONSUMIDA));
+            assertEquals("ASIGNADO", jdbcTemplate.queryForObject(
+                    "SELECT estado FROM activos WHERE id = ?", String.class, activo.id()));
+        }
+    }
+
+    @Test
+    void edicionGeneralNoPuedeForzarTransicionesOperativasNiCambiarTipoProtegido() {
+        ActivoResponse libre = crearActivo("EDICION-LIBRE", laptopId);
+        ResponseStatusException asignadoManual = assertThrows(ResponseStatusException.class,
+                () -> actualizarActivo(libre, laptopId, "ASIGNADO"));
+        assertEquals(HttpStatus.CONFLICT, asignadoManual.getStatusCode());
+
+        ActivoResponse reservado = crearActivo("EDICION-RES", laptopId);
+        SolicitudResponse solicitudReservada = crearSolicitud(solicitanteUnoId, laptopId);
+        aprobar(solicitudReservada, List.of(reservado.id()));
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> actualizarActivo(reservado, laptopId, "EN_MANTENIMIENTO")).getStatusCode());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> actualizarActivo(reservado, monitorId, "DISPONIBLE")).getStatusCode());
+
+        ActivoResponse entregado = crearActivo("EDICION-ENT", laptopId);
+        SolicitudResponse solicitudEntregada = crearSolicitud(solicitanteDosId, laptopId);
+        aprobar(solicitudEntregada, List.of(entregado.id()));
+        entregar(solicitudEntregada.id());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> actualizarActivo(entregado, laptopId, "DISPONIBLE")).getStatusCode());
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ResponseStatusException.class,
+                () -> actualizarActivo(entregado, monitorId, "ASIGNADO")).getStatusCode());
+    }
+
+    private List<AsignacionResponse> entregar(Long solicitudId) {
+        return asignacionService.entregar(solicitudId, solicitudEntrega(), adminId);
+    }
+
+    private EntregaSolicitudRequest solicitudEntrega() {
+        return new EntregaSolicitudRequest(
+                java.time.OffsetDateTime.now().plusDays(7), "Entrega de prueba");
+    }
+
+    private ActivoResponse actualizarActivo(ActivoResponse activo, Long tipoId, String estado) {
+        return activoService.actualizar(activo.id(), new ActivoRequest(
+                tipoId, activo.ubicacionId(), activo.codigoPatrimonial(), activo.numeroSerie(),
+                activo.marca(), activo.modelo(), activo.descripcion(), estado,
+                activo.condicionFisica()), adminId);
+    }
+
+    private List<ResultadoOperacion> ejecutarConcurrentemente(
+            List<java.util.concurrent.Callable<?>> operaciones) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(operaciones.size());
+        CountDownLatch preparados = new CountDownLatch(operaciones.size());
+        CountDownLatch inicio = new CountDownLatch(1);
+        try {
+            List<Future<ResultadoOperacion>> futuros = operaciones.stream()
+                    .map(operacion -> executor.submit(() -> {
+                        preparados.countDown();
+                        inicio.await(5, TimeUnit.SECONDS);
+                        try {
+                            return new ResultadoOperacion(operacion.call(), null);
+                        } catch (Throwable ex) {
+                            return new ResultadoOperacion(null, ex);
+                        }
+                    }))
+                    .toList();
+            assertTrue(preparados.await(5, TimeUnit.SECONDS));
+            inicio.countDown();
+            List<ResultadoOperacion> resultados = new ArrayList<>();
+            for (Future<ResultadoOperacion> futuro : futuros) {
+                resultados.add(futuro.get(15, TimeUnit.SECONDS));
+            }
+            return resultados;
+        } finally {
+            inicio.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
     private Long crearSolicitante(String correo, String nombres) {
         Long id = jdbcTemplate.queryForObject("""
                 INSERT INTO usuarios
@@ -342,6 +583,12 @@ class ReservaActivoPostgresIntegrationTest {
     }
 
     private record ResultadoAprobacion(SolicitudResponse respuesta, Throwable fallo) {
+        boolean exitosa() {
+            return respuesta != null;
+        }
+    }
+
+    private record ResultadoOperacion(Object respuesta, Throwable fallo) {
         boolean exitosa() {
             return respuesta != null;
         }

@@ -239,6 +239,10 @@ public class SolicitudService {
                         d.getActivo() == null ? null : d.getActivo().getCodigoPatrimonial(),
                         d.getObservaciones()))
                 .toList();
+        boolean entregable = "APROBADA".equals(s.getEstado())
+                && !detalles.isEmpty()
+                && reservaActivoRepository.countBySolicitudDetalleSolicitudIdAndEstado(
+                        s.getId(), ReservaActivo.ACTIVA) == detalles.size();
         return new SolicitudResponse(
                 s.getId(),
                 solicitante.getNombres() + " " + solicitante.getApellidos(),
@@ -247,6 +251,7 @@ public class SolicitudService {
                 s.getMotivo(),
                 s.getEstado(),
                 s.getObservacionesAtencion(),
-                detalles);
+                detalles,
+                entregable);
     }
 }

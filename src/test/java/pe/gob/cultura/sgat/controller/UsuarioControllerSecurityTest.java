@@ -8,8 +8,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -19,6 +21,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -45,7 +49,7 @@ import pe.gob.cultura.sgat.service.UsuarioService;
 
 @WebMvcTest(
         controllers = UsuarioController.class,
-        properties = "cors.allowed-origins=http://localhost")
+        properties = "cors.allowed-origins=http://localhost:5173,http://127.0.0.1:5173")
 @Import({SecurityConfig.class, JwtAuthFilter.class,
         UsuarioControllerSecurityTest.ActuatorProbeController.class})
 class UsuarioControllerSecurityTest {
@@ -429,6 +433,25 @@ class UsuarioControllerSecurityTest {
         mockMvc.perform(get("/actuator/env")
                         .header("Authorization", "Bearer token-vigente"))
                 .andExpect(status().isForbidden());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"http://localhost:5173", "http://127.0.0.1:5173"})
+    void permitePreflightDesdeOrigenLocalAutorizado(String origen) throws Exception {
+        mockMvc.perform(options("/api/usuarios")
+                        .header("Origin", origen)
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", origen));
+    }
+
+    @Test
+    void rechazaPreflightDesdeOrigenNoAutorizado() throws Exception {
+        mockMvc.perform(options("/api/usuarios")
+                        .header("Origin", "https://sitio-no-autorizado.example")
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
     }
 
     private void autenticarComo(Usuario usuario) {

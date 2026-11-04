@@ -58,15 +58,23 @@ public class ReservaActivo {
 
     /** La futura entrega debe invocar esto en la misma transacción que crea la asignación física. */
     public void consumir(Usuario responsable, String motivo) {
-        finalizar(CONSUMIDA, responsable, motivo);
+        consumir(responsable, motivo, OffsetDateTime.now());
+    }
+
+    public void consumir(Usuario responsable, String motivo, OffsetDateTime fecha) {
+        finalizar(CONSUMIDA, responsable, motivo, fecha);
     }
 
     private void finalizar(String nuevoEstado, Usuario responsable, String motivo) {
+        finalizar(nuevoEstado, responsable, motivo, OffsetDateTime.now());
+    }
+
+    private void finalizar(String nuevoEstado, Usuario responsable, String motivo, OffsetDateTime fecha) {
         if (!ACTIVA.equals(estado)) {
             throw new IllegalStateException("La reserva ya no está activa");
         }
         estado = nuevoEstado;
-        fechaFinalizacion = OffsetDateTime.now();
+        fechaFinalizacion = fecha;
         usuarioFinalizador = responsable;
         motivoFinalizacion = motivo;
     }

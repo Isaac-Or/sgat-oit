@@ -58,6 +58,8 @@ describe('inventario tecnológico', () => {
     render(<InventarioPage />)
 
     expect(await screen.findByText('PAT-0012')).toBeInTheDocument()
+    expect(screen.getByText('Tipo: Laptop')).toBeInTheDocument()
+    expect(screen.getByText('Categoría: Cómputo')).toBeInTheDocument()
     expect(listarActivos).toHaveBeenCalledWith('')
     await user.selectOptions(screen.getByLabelText('Filtrar por estado'), 'ASIGNADO')
     await waitFor(() => expect(listarActivos).toHaveBeenLastCalledWith('ASIGNADO'))

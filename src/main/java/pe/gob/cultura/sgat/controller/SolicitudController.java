@@ -16,18 +16,23 @@ import org.springframework.web.bind.annotation.RestController;
 import pe.gob.cultura.sgat.config.UsuarioAutenticado;
 import pe.gob.cultura.sgat.dto.AtencionRequest;
 import pe.gob.cultura.sgat.dto.CancelarSolicitudRequest;
+import pe.gob.cultura.sgat.dto.AsignacionResponse;
+import pe.gob.cultura.sgat.dto.EntregaSolicitudRequest;
 import pe.gob.cultura.sgat.dto.SolicitudRequest;
 import pe.gob.cultura.sgat.dto.SolicitudResponse;
 import pe.gob.cultura.sgat.service.SolicitudService;
+import pe.gob.cultura.sgat.service.AsignacionService;
 
 @RestController
 @RequestMapping("/api/solicitudes")
 public class SolicitudController {
 
     private final SolicitudService solicitudService;
+    private final AsignacionService asignacionService;
 
-    public SolicitudController(SolicitudService solicitudService) {
+    public SolicitudController(SolicitudService solicitudService, AsignacionService asignacionService) {
         this.solicitudService = solicitudService;
+        this.asignacionService = asignacionService;
     }
 
     @PostMapping
@@ -58,5 +63,14 @@ public class SolicitudController {
                                       @Valid @RequestBody CancelarSolicitudRequest request,
                                       @AuthenticationPrincipal UsuarioAutenticado usuario) {
         return solicitudService.cancelar(id, request, usuario.id());
+    }
+
+    @PostMapping("/{id}/entrega")
+    @ResponseStatus(HttpStatus.CREATED)
+    public List<AsignacionResponse> entregar(
+            @PathVariable Long id,
+            @Valid @RequestBody EntregaSolicitudRequest request,
+            @AuthenticationPrincipal UsuarioAutenticado usuario) {
+        return asignacionService.entregar(id, request, usuario.id());
     }
 }

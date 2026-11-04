@@ -13,6 +13,7 @@ import pe.gob.cultura.sgat.model.entity.Activo;
 import pe.gob.cultura.sgat.model.entity.TipoActivo;
 import pe.gob.cultura.sgat.model.entity.Ubicacion;
 import pe.gob.cultura.sgat.repository.ActivoRepository;
+import pe.gob.cultura.sgat.repository.AsignacionRepository;
 import pe.gob.cultura.sgat.repository.HistorialEstadoActivoRepository;
 import pe.gob.cultura.sgat.repository.ReservaActivoRepository;
 import pe.gob.cultura.sgat.repository.TipoActivoRepository;
@@ -30,15 +31,18 @@ public class ActivoService {
     private final UbicacionRepository ubicacionRepository;
     private final HistorialEstadoActivoRepository historialRepository;
     private final ReservaActivoRepository reservaActivoRepository;
+    private final AsignacionRepository asignacionRepository;
 
     public ActivoService(ActivoRepository activoRepository, TipoActivoRepository tipoActivoRepository,
                          UbicacionRepository ubicacionRepository, HistorialEstadoActivoRepository historialRepository,
-                         ReservaActivoRepository reservaActivoRepository) {
+                         ReservaActivoRepository reservaActivoRepository,
+                         AsignacionRepository asignacionRepository) {
         this.activoRepository = activoRepository;
         this.tipoActivoRepository = tipoActivoRepository;
         this.ubicacionRepository = ubicacionRepository;
         this.historialRepository = historialRepository;
         this.reservaActivoRepository = reservaActivoRepository;
+        this.asignacionRepository = asignacionRepository;
     }
 
     @Transactional(readOnly = true)
@@ -65,7 +69,12 @@ public class ActivoService {
         aplicarDatos(activo, request);
         activo.setCodigoPatrimonial(codigo);
         activo.setNumeroSerie(serie);
-        activo.setEstado(estadoValido(request.estado(), "DISPONIBLE"));
+        String estadoInicial = estadoValido(request.estado(), "DISPONIBLE");
+        if ("ASIGNADO".equals(estadoInicial)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "El estado ASIGNADO solo se establece mediante una entrega física");
+        }
+        activo.setEstado(estadoInicial);
         activo.setCreadoPor(usuarioId);
         // El trigger de la BD registra automáticamente el estado inicial en el historial
         return aRespuesta(activoRepository.saveAndFlush(activo), false);
@@ -73,7 +82,7 @@ public class ActivoService {
 
     @Transactional
     public ActivoResponse actualizar(Long id, ActivoRequest request, Long usuarioId) {
-        Activo activo = activoRepository.findById(id)
+        Activo activo = activoRepository.findByIdForUpdate(id)
                 .filter(Activo::isActivoLogico)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Activo no encontrado"));
 
@@ -86,10 +95,32 @@ public class ActivoService {
             throw conflicto("Ya existe otro activo con ese número de serie");
         }
 
+        String estadoAnterior = activo.getEstado();
+        String estadoSolicitado = estadoValido(request.estado(), estadoAnterior);
+        boolean reservaActiva = reservaActivoRepository.existsByActivoIdAndEstado(
+                id, pe.gob.cultura.sgat.model.entity.ReservaActivo.ACTIVA);
+        boolean asignacionAbierta = asignacionRepository
+                .existsByActivoIdAndFechaDevolucionRealIsNull(id);
+        boolean tieneAsignaciones = asignacionRepository.existsByActivoId(id);
+        boolean cambiaTipo = !activo.getTipoActivo().getId().equals(request.tipoActivoId());
+
+        if (!"ASIGNADO".equals(estadoAnterior) && "ASIGNADO".equals(estadoSolicitado)) {
+            throw conflicto("El estado ASIGNADO solo se establece mediante una entrega física");
+        }
+        if (asignacionAbierta && !"ASIGNADO".equals(estadoSolicitado)) {
+            throw conflicto("El activo tiene una asignación abierta; registre primero la devolución");
+        }
+        if (reservaActiva && !"DISPONIBLE".equals(estadoSolicitado)) {
+            throw conflicto("El activo reservado debe conservar el estado DISPONIBLE");
+        }
+        if (cambiaTipo && (reservaActiva || tieneAsignaciones)) {
+            throw conflicto("No se puede cambiar el tipo de un activo reservado o con historial de préstamos");
+        }
+
         aplicarDatos(activo, request);
         activo.setCodigoPatrimonial(codigo);
         activo.setNumeroSerie(serie);
-        activo.setEstado(estadoValido(request.estado(), activo.getEstado()));
+        activo.setEstado(estadoSolicitado);
         // Requerido por el trigger de historial cuando cambia el estado
         activo.setModificadoPor(usuarioId);
         Activo actualizado = activoRepository.saveAndFlush(activo);

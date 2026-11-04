@@ -3,13 +3,15 @@ import { listarActivos, listarTiposActivo, type ActivoResponse, type TipoActivoR
 import { ApiError } from '../api/client'
 import {
   crearSolicitud, ESTADOS_SOLICITUD, listarMisSolicitudes, listarSolicitudes,
-  atenderSolicitud, cancelarSolicitud, type AtencionRequest, type CancelarSolicitudRequest,
+  atenderSolicitud, cancelarSolicitud, entregarSolicitud, type AtencionRequest, type CancelarSolicitudRequest,
+  type EntregaSolicitudRequest,
   type EstadoSolicitud, type SolicitudRequest, type SolicitudResponse,
 } from '../api/solicitudes'
 import { useAuth } from '../auth/AuthContext'
 import { AtencionSolicitudForm } from '../components/AtencionSolicitudForm'
 import { CancelacionSolicitudForm } from '../components/CancelacionSolicitudForm'
 import { EmptyState, InlineError, LoadingState, Toast } from '../components/Feedback'
+import { EntregaSolicitudForm } from '../components/EntregaSolicitudForm'
 import { Icon } from '../components/Icon'
 import { Modal } from '../components/Modal'
 import { SolicitudForm } from '../components/SolicitudForm'
@@ -30,6 +32,7 @@ export function SolicitudesPage() {
   const [detail, setDetail] = useState<SolicitudResponse | null>(null)
   const [attention, setAttention] = useState<SolicitudResponse | null>(null)
   const [cancellation, setCancellation] = useState<SolicitudResponse | null>(null)
+  const [delivery, setDelivery] = useState<SolicitudResponse | null>(null)
   const [availableAssets, setAvailableAssets] = useState<ActivoResponse[]>([])
   const [attentionLoading, setAttentionLoading] = useState(false)
   const [toast, setToast] = useState('')
@@ -100,6 +103,14 @@ export function SolicitudesPage() {
     await load()
   }
 
+  const saveDelivery = async (request: EntregaSolicitudRequest) => {
+    if (!delivery) return
+    await entregarSolicitud(delivery.id, request)
+    setDelivery(null)
+    setToast('La entrega física fue registrada correctamente.')
+    await load()
+  }
+
   return (
     <div className="page-stack requests-page">
       <section className="page-intro">
@@ -126,7 +137,8 @@ export function SolicitudesPage() {
               <div className="row-actions">
                 <button className="button secondary small" onClick={() => setDetail(request)}><Icon name="eye" size={16} /> Ver detalle</button>
                 {admin && request.estado === 'PENDIENTE' && <button className="button primary small" onClick={() => void openAttention(request)}><Icon name="approve" size={16} /> Atender</button>}
-                {admin && request.estado === 'APROBADA' && <button className="button danger small" onClick={() => setCancellation(request)}><Icon name="reject" size={16} /> Cancelar</button>}
+                {admin && request.entregable && <button className="button primary small" onClick={() => setDelivery(request)}><Icon name="inventory" size={16} /> Registrar entrega</button>}
+                {admin && request.entregable && <button className="button danger small" onClick={() => setCancellation(request)}><Icon name="reject" size={16} /> Cancelar</button>}
               </div>
             </article>
           ))}
@@ -140,13 +152,14 @@ export function SolicitudesPage() {
           <div className="detail-summary"><span className={`status-badge request-${detail.estado.toLocaleLowerCase()}`}><span />{etiquetaCodigo(detail.estado)}</span><small>Registrada {fechaHora(detail.fechaSolicitud)}</small></div>
           {admin && <div className="detail-row"><span>Solicitante</span><strong>{detail.solicitante}</strong></div>}
           <div className="detail-row"><span>Motivo</span><strong>{detail.motivo}</strong></div>
-          <div className="detail-list"><h3>Equipos solicitados</h3>{detail.detalles.map((item) => <article key={item.id}><div><strong>{item.tipoActivo}</strong>{item.observaciones && <span>{item.observaciones}</span>}</div><small>{item.activo ? detail.estado === 'APROBADA' ? `Reservado: ${item.activo}` : detail.estado === 'CANCELADA' ? `Reserva liberada: ${item.activo}` : `Activo seleccionado: ${item.activo}` : 'Sin activo seleccionado'}</small></article>)}</div>
+          <div className="detail-list"><h3>Equipos solicitados</h3>{detail.detalles.map((item) => <article key={item.id}><div><strong>{item.tipoActivo}</strong>{item.observaciones && <span>{item.observaciones}</span>}</div><small>{item.activo ? detail.entregable ? `Reservado: ${item.activo}` : detail.estado === 'APROBADA' ? `Entregado: ${item.activo}` : detail.estado === 'CANCELADA' ? `Reserva liberada: ${item.activo}` : `Activo seleccionado: ${item.activo}` : 'Sin activo seleccionado'}</small></article>)}</div>
           {detail.observacionesAtencion && <div className="attention-note"><span>Observaciones de atención</span><p>{detail.observacionesAtencion}</p><small>{fechaHora(detail.fechaAtencion)}</small></div>}
         </div>
       </Modal>}
 
       {attention && <Modal wide title={`Atender SOL-${String(attention.id).padStart(5, '0')}`} eyebrow="Decisión administrativa" onClose={() => setAttention(null)}><AtencionSolicitudForm solicitud={attention} activos={availableAssets} onSubmit={saveAttention} onCancel={() => setAttention(null)} /></Modal>}
       {cancellation && <Modal title={`Cancelar SOL-${String(cancellation.id).padStart(5, '0')}`} eyebrow="Liberación de reservas" onClose={() => setCancellation(null)}><CancelacionSolicitudForm onSubmit={saveCancellation} onCancel={() => setCancellation(null)} /></Modal>}
+      {delivery && <Modal title={`Entregar SOL-${String(delivery.id).padStart(5, '0')}`} eyebrow="Entrega física" onClose={() => setDelivery(null)}><EntregaSolicitudForm solicitud={delivery} onSubmit={saveDelivery} onCancel={() => setDelivery(null)} /></Modal>}
       {toast && <Toast message={toast} onClose={() => setToast('')} />}
     </div>
   )
